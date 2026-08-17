@@ -12,10 +12,16 @@
   "_client_ip_header": "header the login throttle believes, e.g. CF-Connecting-IP. Only set it if your proxy OVERWRITES it; empty uses the last X-Forwarded-For entry, the one a client cannot choose",
   "client_ip_header": "",
 
+  "_trash": "true (default) sends deletions to a .trash folder instead of destroying them. Deleting from inside .trash is what really removes a file",
+  "trash": true,
+
+  "_webhook_url": "POSTed a small JSON object when an upload finishes. Empty disables it",
+  "webhook_url": "",
+
   "_secret": "openssl rand -base64 48",
   "secret": "REPLACE-WITH-48-RANDOM-CHARACTERS-AT-LEAST-32",
 
-  "_users_file": "where accounts are stored. Must be on a mount, or they vanish on the next rebuild. Defaults to /var/lib/depot-gw/users.json",
+  "_users_file": "where accounts and links are stored. Must be on a mount, or they vanish on the next rebuild. Defaults to /var/lib/depot-gw/users.json",
 
   "_users": "seed only: copied into users_file on first start, then managed from the interface. Hash with: depot-gw -hash 'the-password'",
   "_root": "empty root = the whole drop; set = confined to that subfolder",

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -417,16 +416,7 @@ func (s *server) writeStoreResult(w http.ResponseWriter, err error) {
 // the gateway only has the data folder read-only, and going through the storage
 // keeps ownership consistent with every other write.
 func (s *server) ensureUpstreamDir(rel string) {
-	// Escaped per segment: a folder name may legitimately hold a space, and a "?"
-	// or "#" left raw would silently turn the rest of the path into a query.
-	var esc []string
-	for _, seg := range strings.Split(rel, "/") {
-		if seg != "" {
-			esc = append(esc, url.PathEscape(seg))
-		}
-	}
-	req, err := http.NewRequest("MKCOL",
-		strings.TrimSuffix(s.cfg.Upstream, "/")+"/"+strings.Join(esc, "/")+"/", nil)
+	req, err := http.NewRequest("MKCOL", s.upstreamURL("/"+strings.Trim(rel, "/")+"/"), nil)
 	if err != nil {
 		return
 	}

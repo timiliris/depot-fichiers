@@ -67,6 +67,10 @@ never exposed.
 ## Features
 
 - Sign-in page, signed cookie session, sign-out
+- **Links, both directions**: hand someone a file without an account, or hand them
+  a place to upload into without letting them see what is already there
+- **Deletions go to a bin**, so no account can destroy anything outright
+- **A webhook when an upload finishes**, so you know something arrived
 - Accounts managed from the interface: create, delete, reset a password, promote
 - **One folder per account, or the whole drop** — chosen per account
 - Guests change their own password, so the owner is not the help desk
@@ -202,6 +206,8 @@ be refused anyway. To check that on your own install:
 
 ```bash
 BASE=http://127.0.0.1:8099 ADMIN=me ADMIN_PW=... ./scripts/test-accounts.sh
+BASE=http://127.0.0.1:8099 ADMIN=me ADMIN_PW=... DATA=/srv/depot/upload \
+  ./scripts/test-links.sh
 ```
 
 It creates `test-*` accounts and deletes them afterwards, so point it at a
@@ -251,6 +257,61 @@ dependency. The server answers with stable error codes (`bad_credentials`,
 `throttled`, `session_expired`) precisely so the wording stays in that one place.
 
 <img src="docs/list-fr.png" alt="French interface" width="60%">
+
+## Links
+
+Two directions, one mechanism, no account at either end:
+
+- a **share link** gives read access to one file or folder;
+- a **drop link** accepts uploads into one folder and **refuses every read** —
+  the holder can put a video there and cannot list, download or delete anything.
+
+Both are created from the row menu, carry an optional expiry, and can be revoked
+from *Links* in the account menu. A link can never reach outside the path it was
+made for, nor outside the folder its author was confined to: it cannot hand out
+more than the person who made it had. The token is 256 bits and is checked, with
+the expiry and the path, on every request.
+
+Opening `/s/<token>` loads the same interface with almost everything removed — no
+session, no account menu, and for a drop link no listing at all. The chunked
+uploader is the same one, so a link upload resumes after an interruption exactly
+like a signed-in one.
+
+## The bin
+
+Deleting moves the item to `.trash/` instead of destroying it. This is not
+optional politeness: the storage's delete permission cannot be turned off (an
+interrupted upload needs it to overwrite its own partial file), so without a bin
+every account can wipe files for good.
+
+`.trash/` is an ordinary visible folder — deleting *from inside it* is what really
+removes something, which is also how it gets emptied. A confined account has its
+own bin inside its own folder, so deleting never reaches further than reading
+does. Set `"trash": false` to go back to hard deletes.
+
+## Knowing something arrived
+
+Set `webhook_url` and each finished upload POSTs one object:
+
+```json
+{ "event": "upload", "path": "/guest/hike.mp4", "name": "hike.mp4",
+  "size": 4812331008, "user": "guest", "link": "", "at": "2026-08-17T20:08:06Z" }
+```
+
+Point it at whatever you already use — ntfy, a chat webhook, a script. There is no
+SMTP and no queue.
+
+The gateway only ever sees slices, so the browser announces the end of a file and
+the gateway **checks the claim against storage** before firing: a client cannot
+announce a file that is not there.
+
+## Backups
+
+Nothing here backs up your data, and the bin is not a backup — it lives on the
+same volume. Whatever you already use is fine; the shape that matters is: refuse
+to run when the volume is not mounted (an unmounted path looks like an empty
+folder, and a backup tool will faithfully record that absence), and include
+`.trash/`, which is precisely what you want when someone emptied the wrong thing.
 
 ## Accessibility
 

@@ -64,6 +64,12 @@ const I18N = {
     folder_hint2: "Leave empty to give the whole drop.",
     quota_warn: "getting full", quota_full: "almost full",
     err_required: "Required",
+    share: "Share", share_link: "Share link", drop_link: "Upload link",
+    link_make: "Create a link", link_kind: "Kind", link_expiry: "Expires",
+    link_never: "Never", link_days: "{0} days", link_copy: "Copy", link_copied: "Link copied",
+    link_revoke: "Revoke", link_none: "No link yet", link_gone: "This link no longer exists",
+    link_drop_title: "Send files to {0}", link_drop_sub: "Your files go straight to the owner. You cannot see what is already there.",
+    link_share_title: "Shared with you", links_title: "Links",
   },
   fr: {
     login_sub: "Espace de dépôt privé", field_user: "Identifiant", field_password: "Mot de passe",
@@ -113,6 +119,12 @@ const I18N = {
     folder_hint2: "Vide pour donner accès à tout le dépôt.",
     quota_warn: "se remplit", quota_full: "presque plein",
     err_required: "Obligatoire",
+    share: "Partager", share_link: "Lien de partage", drop_link: "Lien de dépôt",
+    link_make: "Créer un lien", link_kind: "Type", link_expiry: "Expiration",
+    link_never: "Jamais", link_days: "{0} jours", link_copy: "Copier", link_copied: "Lien copié",
+    link_revoke: "Révoquer", link_none: "Aucun lien", link_gone: "Ce lien n’existe plus",
+    link_drop_title: "Envoyer des fichiers vers {0}", link_drop_sub: "Vos fichiers vont directement au propriétaire. Vous ne voyez pas ce qui s’y trouve déjà.",
+    link_share_title: "Partagé avec vous", links_title: "Liens",
   },
 };
 
@@ -146,6 +158,9 @@ const state = {
   // would be refused anyway.
   root: "",
   base: "/",
+  // Set when the page was opened through /s/<token>: there is no session then,
+  // the token is the whole credential and it decides what may be done.
+  link: null,
   admin: false,
   entries: [],
   sort: { key: "name", dir: 1 },
@@ -162,7 +177,8 @@ const api = {
     // slashed form, and that Location points outside /api/fs.
     const trailing = p.endsWith("/");
     const clean = p.split("/").filter(Boolean).map(encodeURIComponent).join("/");
-    return "/api/fs/" + clean + (trailing && clean ? "/" : "") + query;
+    const base = state.link ? `/api/linkfs/${state.link.token}/fs/` : "/api/fs/";
+    return base + clean + (trailing && clean ? "/" : "") + query;
   },
 
   async json(p) {
@@ -269,6 +285,7 @@ const ICON = {
   pause: svg(`<path d="M9 5v14M15 5v14"/>`),
   play: svg(`<path d="M7 5l12 7-12 7V5Z"/>`),
   retry: svg(`<path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v4h-4"/>`),
+  link: svg(`<path d="M10 13.5a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.7l-1 1"/><path d="M14 10.5a4 4 0 0 0-5.7 0l-3 3a4 4 0 1 0 5.7 5.7l1-1"/>`),
 };
 
 const EXT = {
@@ -466,6 +483,7 @@ function row(e) {
     <span class="row-actions">
       <a href="${api.url(full, isDir ? "?zip" : "")}" download="${escapeHTML(e.name)}"
          title="${escapeHTML(t("download"))}" data-stop>${ICON.download}</a>
+      <button title="${escapeHTML(t("share"))}" data-share>${ICON.link}</button>
       <button title="${escapeHTML(t("rename"))}" data-rename>${ICON.pencil}</button>
       <button title="${escapeHTML(t("delete"))}" class="is-danger" data-del>${ICON.trash}</button>
     </span>`;
@@ -473,6 +491,8 @@ function row(e) {
   const open = () => (isDir ? go(full + "/") : preview(e, full));
   el.onclick = (ev) => { if (!ev.target.closest("[data-stop],button")) open(); };
   el.onkeydown = (ev) => { if (ev.key === "Enter") open(); };
+
+  el.querySelector("[data-share]").onclick = () => openLinkSheet(e, full);
 
   el.querySelector("[data-rename]").onclick = async () => {
     const name = await ask({ title: t("ask_rename"), value: e.name, confirmLabel: t("rename") });
@@ -702,6 +722,8 @@ class Upload {
       if (this.file.size === 0) await this.sendSlice(this.file, 0);
 
       this.status = "done";
+      // The gateway only ever sees slices, so completion has to be announced.
+      notifyDone(this.dest);
       this.el.classList.add("is-done");
       this.$pause.remove();
       this.$cancel.remove();
@@ -829,6 +851,17 @@ async function walkDataTransfer(dt) {
   return out;
 }
 
+function notifyDone(dest) {
+  const url = state.link
+    ? `/api/linknotify/${state.link.token}`
+    : "/api/notify";
+  fetch(url, {
+    method: "POST",
+    headers: { "X-Depot": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ path: dest }),
+  }).catch(() => {});
+}
+
 /* ── session ──────────────────────────────────────────────────────── */
 
 function sessionLost() {
@@ -857,6 +890,10 @@ function setLang(lang) {
 }
 
 async function boot() {
+  // A /s/<token> URL is a link, not a session: ask about the link instead.
+  const linkToken = (location.pathname.match(/^\/s\/([A-Za-z0-9_-]+)/) || [])[1];
+  if (linkToken) return bootLink(linkToken);
+
   const r = await fetch("/api/session");
   const s = await r.json();
   setLang(s.lang);
@@ -1174,6 +1211,149 @@ async function openAccountsSheet() {
 }
 
 
+
+/* ── link mode ────────────────────────────────────────────────────────── */
+
+/* Opened through a link, the page is the same application with most of it taken
+ * away: no account menu, no session, and for a drop link no listing at all —
+ * the holder puts files in and never sees what is already there. */
+async function bootLink(token) {
+  const r = await fetch(`/api/link/${encodeURIComponent(token)}`);
+  const info = await r.json().catch(() => ({}));
+  setLang(info.lang);
+  document.body.classList.remove("booting");
+
+  if (!r.ok) {
+    $("loginTitle").textContent = info.title || "Drop";
+    $("loginError").textContent = t("link_gone");
+    $("loginError").hidden = false;
+    $("loginForm").querySelectorAll(".field, #loginBtn").forEach((e) => e.remove());
+    return;
+  }
+
+  state.link = { token, kind: info.kind, name: info.name };
+  state.base = "/";
+  state.path = "/";
+  document.title = info.title || "Drop";
+  document.body.classList.add("authed", "is-link", `link-${info.kind}`);
+
+  const crumb = document.createElement("span");
+  crumb.className = "crumb is-last";
+  crumb.textContent = info.kind === "drop"
+    ? t("link_drop_title", info.name)
+    : t("link_share_title");
+  $("breadcrumb").append(crumb);
+
+  if (info.kind === "drop") {
+    $("empty").hidden = false;
+    $("empty").querySelector(".empty-title").textContent = t("link_drop_title", info.name);
+    $("empty").querySelector(".empty-sub").textContent = t("link_drop_sub");
+    return; // no listing: a drop link must not become a way to read
+  }
+  go("/", false);
+}
+
+/* ── links, for signed-in accounts ────────────────────────────────────── */
+
+async function openLinkSheet(entry, full) {
+  const isDir = entry.path_type.startsWith("Dir");
+  const { wrap, close } = sheet(`
+    <h2>${escapeHTML(t("link_make"))}</h2>
+    <p class="sheet-msg">${escapeHTML(entry.name)}</p>
+    <label class="field"><span>${escapeHTML(t("link_kind"))}</span>
+      <select data-kind>
+        <option value="share">${escapeHTML(t("share_link"))}</option>
+        ${isDir ? `<option value="drop">${escapeHTML(t("drop_link"))}</option>` : ""}
+      </select>
+    </label>
+    <label class="field"><span>${escapeHTML(t("link_expiry"))}</span>
+      <select data-days>
+        <option value="7">${escapeHTML(t("link_days", 7))}</option>
+        <option value="30">${escapeHTML(t("link_days", 30))}</option>
+        <option value="0">${escapeHTML(t("link_never"))}</option>
+      </select>
+    </label>
+    <div class="link-out" data-out hidden>
+      <input type="text" data-url readonly>
+      <button class="btn btn-ghost btn-tiny" data-copy>${escapeHTML(t("link_copy"))}</button>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-cancel>${escapeHTML(t("close"))}</button>
+      <button class="btn btn-primary" data-make>${escapeHTML(t("link_make"))}</button>
+    </div>`, false, t("link_make"));
+
+  wrap.querySelector("[data-cancel]").onclick = close;
+  wrap.querySelector("[data-make]").onclick = async () => {
+    try {
+      const d = await callAPI("POST", "/api/links", {
+        kind: wrap.querySelector("[data-kind]").value,
+        path: full,
+        days: parseInt(wrap.querySelector("[data-days]").value, 10),
+      });
+      const url = `${location.origin}/s/${d.token}`;
+      wrap.querySelector("[data-out]").hidden = false;
+      const field = wrap.querySelector("[data-url]");
+      field.value = url;
+      field.select();
+      wrap.querySelector("[data-copy]").onclick = async () => {
+        try { await navigator.clipboard.writeText(url); } catch { field.select(); }
+        toast(t("link_copied"), "ok");
+      };
+    } catch (e) {
+      toast(e.message, "bad");
+    }
+  };
+}
+
+async function openLinksList() {
+  const { wrap, close } = sheet(`
+    <h2>${escapeHTML(t("links_title"))}</h2>
+    <div class="acc-list" data-list></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>${escapeHTML(t("close"))}</button>
+    </div>`, true, t("links_title"));
+  wrap.querySelector("[data-close]").onclick = close;
+  const list = wrap.querySelector("[data-list]");
+
+  const render = async () => {
+    const d = await callAPI("GET", "/api/links").catch(() => ({ links: [] }));
+    list.innerHTML = "";
+    if (!d.links.length) {
+      list.innerHTML = `<p class="sheet-hint" style="padding:.6rem">${escapeHTML(t("link_none"))}</p>`;
+      return;
+    }
+    for (const l of d.links) {
+      const row = document.createElement("div");
+      row.className = "acc";
+      const url = `${location.origin}/s/${l.token}`;
+      row.innerHTML = `
+        <span class="acc-id">
+          <strong>${escapeHTML(l.name || "/")}</strong>
+          <span class="tag">${escapeHTML(l.kind === "drop" ? t("drop_link") : t("share_link"))}</span>
+          <span class="acc-root">${l.expires
+            ? escapeHTML(when(l.expires * 1000)) : escapeHTML(t("link_never"))}</span>
+        </span>
+        <span class="acc-act">
+          <button data-copy title="${escapeHTML(t("link_copy"))}">⧉</button>
+          <button data-del class="is-danger" title="${escapeHTML(t("link_revoke"))}">${ICON.trash}</button>
+        </span>`;
+      row.querySelector("[data-copy]").onclick = async () => {
+        try { await navigator.clipboard.writeText(url); toast(t("link_copied"), "ok"); }
+        catch { toast(url); }
+      };
+      row.querySelector("[data-del]").onclick = async () => {
+        try {
+          await callAPI("DELETE", `/api/links/${encodeURIComponent(l.token)}`);
+          toast(t("link_revoke"), "ok");
+          render();
+        } catch (e) { toast(e.message, "bad"); }
+      };
+      list.append(row);
+    }
+  };
+  render();
+}
+
 /* ── theme ────────────────────────────────────────────────────────────── */
 
 /* R59: the system preference is the default, but the choice has to be the
@@ -1254,6 +1434,7 @@ document.addEventListener("click", (e) => {
 
 $("passwordBtn").onclick = () => { $("userPop").hidden = true; openPasswordSheet(); };
 $("manageBtn").onclick = () => { $("userPop").hidden = true; openAccountsSheet(); };
+$("linksBtn").onclick = () => { $("userPop").hidden = true; openLinksList(); };
 
 $("logoutBtn").onclick = async () => {
   await fetch("/api/logout", { method: "POST", headers: { "X-Depot": "1" } });

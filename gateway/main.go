@@ -32,6 +32,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,7 +72,14 @@ type config struct {
 	// the last X-Forwarded-For entry is used — the one appended by the nearest
 	// proxy, and so the only one a client cannot choose.
 	ClientIPHeader string `json:"client_ip_header"`
-	Users          []user `json:"users"`
+	// Trash sends deletions to a .trash folder instead of destroying them.
+	// Default on: the delete permission is not optional (an interrupted upload
+	// needs it), so every account can otherwise wipe files for good.
+	Trash *bool `json:"trash"`
+	// WebhookURL receives a small JSON POST when an upload finishes. Empty
+	// disables it. No SMTP, no dependency — plug it into whatever you use.
+	WebhookURL string `json:"webhook_url"`
+	Users      []user `json:"users"`
 	// UsersFile holds the mutable account list, and defaults next to this file.
 	// Accounts live apart from the operator settings because they are the only
 	// state the program rewrites: a bug there cannot take the secret with it.
@@ -84,6 +92,7 @@ type server struct {
 	proxy        *httputil.ReverseProxy
 	web          fs.FS
 	users        *store
+	links        *linkStore
 	upstreamAuth string
 
 	mu       sync.Mutex
@@ -122,6 +131,10 @@ func main() {
 	if cfg.Title == "" {
 		cfg.Title = "Drop"
 	}
+	if cfg.Trash == nil {
+		on := true
+		cfg.Trash = &on
+	}
 	if len(cfg.Secret) < 32 {
 		log.Fatal("config: secret must be at least 32 characters")
 	}
@@ -151,11 +164,17 @@ func main() {
 		log.Fatalf("accounts: %v", err)
 	}
 
+	links, err := newLinkStore(filepath.Join(filepath.Dir(cfg.UsersFile), "links.json"))
+	if err != nil {
+		log.Fatalf("links: %v", err)
+	}
+
 	srv := &server{
 		cfg:      cfg,
 		secret:   []byte(cfg.Secret),
 		web:      webFS(),
 		users:    users,
+		links:    links,
 		attempts: map[string]*attempt{},
 	}
 	if cfg.UpstreamAuth != "" {
@@ -205,6 +224,13 @@ func main() {
 	mux.HandleFunc("/api/password", srv.handlePassword)
 	mux.HandleFunc("/api/users", srv.requireAdmin(srv.handleUsers))
 	mux.HandleFunc("/api/users/", srv.requireAdmin(srv.handleUser))
+	mux.HandleFunc("/api/notify", srv.requireAuth(srv.handleNotify))
+	mux.HandleFunc("/api/links", srv.handleLinks)
+	mux.HandleFunc("/api/links/", srv.handleLinks)
+	// Public: the token is the only credential, so these carry no session check.
+	mux.HandleFunc("/api/link/", srv.handleLinkInfo)
+	mux.HandleFunc("/api/linkfs/", srv.handleLinkFS)
+	mux.HandleFunc("/api/linknotify/", srv.handleLinkNotify)
 	mux.HandleFunc("/api/fs/", srv.requireAuth(srv.handleFS))
 	mux.HandleFunc("/", srv.handleStatic)
 
@@ -521,6 +547,31 @@ var allowedMethods = map[string]bool{
 	http.MethodPatch: true, http.MethodDelete: true, "MKCOL": true, "MOVE": true,
 }
 
+// upstreamURL escapes a path segment by segment before it enters an upstream
+// URL: a name may hold a space, and a raw "?" or "#" would swallow the rest.
+func (s *server) upstreamURL(p string) string {
+	var esc []string
+	for _, seg := range strings.Split(p, "/") {
+		if seg != "" {
+			esc = append(esc, url.PathEscape(seg))
+		}
+	}
+	out := strings.TrimSuffix(s.cfg.Upstream, "/") + "/" + strings.Join(esc, "/")
+	if strings.HasSuffix(p, "/") && len(esc) > 0 {
+		out += "/"
+	}
+	return out
+}
+
+// trashRoot is the bin for this account: inside its own folder when it has one,
+// so deleting never becomes a way to reach further than reading does.
+func trashRoot(u *user) string {
+	if u != nil && u.Root != "" {
+		return "/" + u.Root + "/.trash"
+	}
+	return "/.trash"
+}
+
 // withinRoot reports whether a cleaned path stays inside the account's folder.
 // An account with no Root sees the whole drop.
 func withinRoot(u *user, clean string) bool {
@@ -574,6 +625,23 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
 		return
 	}
+	// A deletion is turned into a move to the bin. Deleting from inside the bin
+	// is left alone — that is how it gets emptied, and the only way anything is
+	// ever really destroyed.
+	if r.Method == http.MethodDelete && *s.cfg.Trash {
+		bin := trashRoot(me)
+		trimmed := strings.TrimSuffix(clean, "/")
+		if trimmed != bin && !strings.HasPrefix(trimmed, bin+"/") {
+			s.ensureUpstreamDir(strings.TrimPrefix(bin, "/"))
+			// The timestamp keeps two deletions of the same name apart.
+			dest := fmt.Sprintf("%s/%d-%s", bin, time.Now().Unix(), path.Base(trimmed))
+			r.Method = "MOVE"
+			r.Header.Set("Destination", s.upstreamURL(dest))
+			r.ContentLength = 0
+			r.Body = http.NoBody
+		}
+	}
+
 	r.URL.Path = clean
 
 	// A stored file is served from this very origin, so anything scriptable that
@@ -642,8 +710,9 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		body = []byte(strings.NewReplacer(
-			`href="app.css"`, `href="app.css?v=`+assetVer+`"`,
-			`src="app.js"`, `src="app.js?v=`+assetVer+`"`,
+			`href="app.css"`, `href="/app.css?v=`+assetVer+`"`,
+			`src="app.js"`, `src="/app.js?v=`+assetVer+`"`,
+			`href="icon.svg"`, `href="/icon.svg"`,
 		).Replace(string(body)))
 	case ".css", ".js":
 		if path.Ext(name) == ".css" {

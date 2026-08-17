@@ -1000,6 +1000,48 @@ body.has-dialog .app > *:not(.sheet) { user-select: none; }
 .theme-seg button:hover { color: var(--text); }
 .theme-seg button.is-on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 
+
+/* ── link mode ──────────────────────────────────────────────────────── */
+
+/* Reached through /s/<token>: same application, most of it taken away. */
+body.is-link .user-menu,
+body.is-link .search,
+body.is-link #newFolder,
+body.is-link #pickFolder,
+body.is-link [data-share],
+body.is-link [data-rename],
+body.is-link [data-del] { display: none; }
+
+/* A drop link shows no listing at all — that is the point of it. */
+body.link-drop .listing,
+body.link-drop .seg { display: none; }
+body.link-drop .empty { display: grid; }
+
+body.link-share .toolbar > .btn { display: none; }
+
+.link-out {
+  display: flex; gap: .4rem; align-items: center;
+  margin: .2rem 0 1rem;
+}
+.link-out input {
+  flex: 1; min-width: 0;
+  padding: .5rem .6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font: 400 .8125rem/1.4 var(--mono);
+}
+
+.field select {
+  width: 100%;
+  padding: .55rem .6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: .875rem;
+}
+.field select:focus { outline: none; border-color: var(--accent); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
