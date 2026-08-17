@@ -9,6 +9,9 @@
   "_lang": "\"en\" or \"fr\"; leave empty to follow each browser",
   "lang": "",
 
+  "_client_ip_header": "header the login throttle believes, e.g. CF-Connecting-IP. Only set it if your proxy OVERWRITES it; empty uses the last X-Forwarded-For entry, the one a client cannot choose",
+  "client_ip_header": "",
+
   "_secret": "openssl rand -base64 48",
   "secret": "REPLACE-WITH-48-RANDOM-CHARACTERS-AT-LEAST-32",
 

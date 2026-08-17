@@ -234,6 +234,7 @@ on the storage side.
 | `secret` | cookie signing key, 32 characters minimum |
 | `title` | displayed name |
 | `lang` | `en` or `fr`; empty follows each browser |
+| `client_ip_header` | header the throttle believes, e.g. `CF-Connecting-IP`. Only set it if your proxy **overwrites** it |
 | `users_file` | where accounts live; must be on a mount |
 | `users[]` | seed only: `name`, `hash` (PBKDF2), `admin`, `root` |
 
@@ -252,17 +253,45 @@ dependency. The server answers with stable error codes (`bad_credentials`,
 
 ## Security
 
+**Uploaded files cannot script the origin.** This is the one that matters most on
+a service where guests upload: a stored file is served from the same origin as the
+interface, so an uploaded `.html` would otherwise run with the session of whoever
+opened it — a guest could hand the administrator a link and walk off with their
+cookie. Every storage response therefore carries `Content-Security-Policy: sandbox`
+and `X-Content-Type-Options: nosniff`, which drops it into an opaque origin with
+scripting off while still letting `<img>`, `<video>` and `<audio>` use it.
+
+**The throttle cannot be dodged with a header.** `X-Forwarded-For` is appended to
+by each proxy, so its *first* entry is whatever the client cared to invent; only
+the last one was written by the proxy that saw the peer. That is the one used, and
+`client_ip_header` names a header to trust instead when a proxy you control
+overwrites one. Get this wrong and five wrong passwords become unlimited ones.
+
+Everything else:
+
 - Passwords with PBKDF2-HMAC-SHA256, 210,000 iterations, per-account salt
 - Session cookie signed with HMAC-SHA256, `HttpOnly`, `SameSite=Lax`, `Secure` as
   soon as the request arrives over HTTPS
 - Constant response time between an unknown account and a wrong password
-- Progressive per-IP lockout after 5 failures: 1, 2, 4… up to 32 minutes
+- Progressive per-IP lockout after 5 failures: 1, 2, 4… up to 32 minutes, with the
+  tracking table capped so a sweep through many addresses cannot grow it forever
 - Every write requires an `X-Depot` header, which a cross-site form cannot set
-- Paths are normalised before they reach the storage, and every request is
-  checked against the account's folder — including the destination of a move
+- Paths are normalised before they reach the storage, and every request is checked
+  against the account's folder — including the destination of a move
 - A password change, or a deletion, drops that account's open sessions at once
-- No external dependency on either side: no CDN, no third-party module, so there
-  is nothing to track beyond the standard library
+- A narrow `Content-Security-Policy` on the interface itself: no CDN and no inline
+  script means the policy can name this origin and nothing else
+- The client's `Authorization` header is stripped before the request reaches the
+  storage, so nobody can pick the identity used against it
+- No external dependency on either side, so there is nothing to track beyond the
+  standard library
+
+### Known limitation
+
+Byte-range requests survive to the origin — verified, `206` with the exact slice —
+but can be lost when Cloudflare proxies a large response, which turns seeking
+inside a long video into a fetch from the beginning. Storage and gateway are not
+at fault; reach the origin directly if seeking matters.
 
 ## Credits
 

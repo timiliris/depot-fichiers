@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -63,8 +64,14 @@ type config struct {
 	Title        string `json:"title"`
 	// Lang pins the interface language ("en" or "fr"). Empty lets each browser
 	// pick from its own Accept-Language.
-	Lang  string `json:"lang"`
-	Users []user `json:"users"`
+	Lang string `json:"lang"`
+	// ClientIPHeader names the header the throttle should believe, e.g.
+	// "CF-Connecting-IP". Only set it when a proxy you control *overwrites* that
+	// header, because whatever it names is then taken at face value. Left empty,
+	// the last X-Forwarded-For entry is used — the one appended by the nearest
+	// proxy, and so the only one a client cannot choose.
+	ClientIPHeader string `json:"client_ip_header"`
+	Users          []user `json:"users"`
 	// UsersFile holds the mutable account list, and defaults next to this file.
 	// Accounts live apart from the operator settings because they are the only
 	// state the program rewrites: a bug there cannot take the secret with it.
@@ -206,7 +213,7 @@ func main() {
 	// up by the reverse proxy.
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           logRequests(mux),
+		Handler:           srv.logRequests(mux),
 		ReadHeaderTimeout: 20 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
@@ -335,15 +342,28 @@ func (s *server) setSession(w http.ResponseWriter, r *http.Request, u *user) {
 	})
 }
 
-func clientIP(r *http.Request) string {
-	if v := r.Header.Get("CF-Connecting-IP"); v != "" {
-		return v
+func (s *server) clientIP(r *http.Request) string {
+	if h := s.cfg.ClientIPHeader; h != "" {
+		if v := r.Header.Get(h); v != "" {
+			// A configured header is trusted, so its first value is the client.
+			if i := strings.IndexByte(v, ','); i > 0 {
+				return strings.TrimSpace(v[:i])
+			}
+			return strings.TrimSpace(v)
+		}
 	}
+	// Otherwise the LAST X-Forwarded-For entry: a proxy appends the peer it
+	// actually saw, so earlier entries are whatever the client cared to invent.
+	// Reading the first one instead would let anyone dodge the throttle by
+	// changing a header between attempts.
 	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
+		if i := strings.LastIndexByte(v, ','); i >= 0 {
+			return strings.TrimSpace(v[i+1:])
 		}
 		return strings.TrimSpace(v)
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
 	return r.RemoteAddr
 }
@@ -364,9 +384,29 @@ func (s *server) throttle(ip string) time.Duration {
 	return 0
 }
 
+// maxTracked caps the throttle table. Without it, a run through a wide range of
+// addresses grows the map for as long as the process lives.
+const maxTracked = 4096
+
 func (s *server) noteFailure(ip string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.attempts) >= maxTracked {
+		// Drop entries whose lockout has run out; if none have, drop anything, as
+		// forgetting a counter is far better than growing without bound.
+		now := time.Now()
+		for k, v := range s.attempts {
+			if now.After(v.until) {
+				delete(s.attempts, k)
+			}
+		}
+		for k := range s.attempts {
+			if len(s.attempts) < maxTracked {
+				break
+			}
+			delete(s.attempts, k)
+		}
+	}
 	a := s.attempts[ip]
 	// Once a lockout has run its course, start counting from scratch.
 	if a == nil || (a.count >= 5 && time.Now().After(a.until)) {
@@ -392,7 +432,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if wait := s.throttle(ip); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
@@ -536,6 +576,14 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	}
 	r.URL.Path = clean
 
+	// A stored file is served from this very origin, so anything scriptable that
+	// someone uploads would run with the session of whoever opens it — a guest
+	// could hand the administrator a link and walk off with their cookie.
+	// `sandbox` drops the response into an opaque origin with scripting off,
+	// while still letting <img>, <video> and <audio> use it as a subresource.
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	// MOVE carries a Destination pointing back at us; rewrite it into the
 	// upstream's space or dufs rejects it as a foreign host.
 	if dest := r.Header.Get("Destination"); dest != "" {
@@ -604,6 +652,12 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	// Everything the interface needs comes from this origin: no CDN, no inline
+	// script, no third-party module. So the policy can be this narrow.
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
+			"media-src 'self'; frame-src 'self'; object-src 'none'; "+
+			"base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	http.ServeContent(w, r, name, buildTime, bytesReader(body))
 }
 
@@ -613,13 +667,13 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func logRequests(next http.Handler) http.Handler {
+func (s *server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		next.ServeHTTP(sw, r)
 		// Upload slices are the chatty case; keep them, on one short line.
-		log.Printf("%s %s %s %d %s", clientIP(r), r.Method, r.URL.RequestURI(),
+		log.Printf("%s %s %s %d %s", s.clientIP(r), r.Method, r.URL.RequestURI(),
 			sw.code, time.Since(start).Round(time.Millisecond))
 	})
 }

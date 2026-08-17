@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -363,7 +364,7 @@ func (s *server) handlePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The throttle covers this too: it is a second door onto the same secret.
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if wait := s.throttle(ip); wait > 0 {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
 			"error": "throttled", "retry_after": int(wait.Seconds()) + 1,
@@ -416,7 +417,16 @@ func (s *server) writeStoreResult(w http.ResponseWriter, err error) {
 // the gateway only has the data folder read-only, and going through the storage
 // keeps ownership consistent with every other write.
 func (s *server) ensureUpstreamDir(rel string) {
-	req, err := http.NewRequest("MKCOL", strings.TrimSuffix(s.cfg.Upstream, "/")+"/"+rel+"/", nil)
+	// Escaped per segment: a folder name may legitimately hold a space, and a "?"
+	// or "#" left raw would silently turn the rest of the path into a query.
+	var esc []string
+	for _, seg := range strings.Split(rel, "/") {
+		if seg != "" {
+			esc = append(esc, url.PathEscape(seg))
+		}
+	}
+	req, err := http.NewRequest("MKCOL",
+		strings.TrimSuffix(s.cfg.Upstream, "/")+"/"+strings.Join(esc, "/")+"/", nil)
 	if err != nil {
 		return
 	}
