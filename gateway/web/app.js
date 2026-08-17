@@ -58,6 +58,12 @@ const I18N = {
     err_weak: "At least {0} characters", err_exists: "That name is already taken",
     err_last_admin: "This is the last administrator", err_not_yourself: "You cannot delete your own account",
     err_not_admin: "Administrator only", err_outside: "Outside your folder",
+    theme: "Theme", theme_system: "System", theme_light: "Light", theme_dark: "Dark",
+    pw_hint: "At least {0} characters. Length beats complexity — no other rule.",
+    name_hint: "Letters, digits, dot, dash or underscore.",
+    folder_hint2: "Leave empty to give the whole drop.",
+    quota_warn: "getting full", quota_full: "almost full",
+    err_required: "Required",
   },
   fr: {
     login_sub: "Espace de dépôt privé", field_user: "Identifiant", field_password: "Mot de passe",
@@ -101,6 +107,12 @@ const I18N = {
     err_weak: "Au moins {0} caractères", err_exists: "Cet identifiant est déjà pris",
     err_last_admin: "C’est le dernier administrateur", err_not_yourself: "Vous ne pouvez pas supprimer votre propre compte",
     err_not_admin: "Réservé à l’administrateur", err_outside: "Hors de votre dossier",
+    theme: "Thème", theme_system: "Système", theme_light: "Clair", theme_dark: "Sombre",
+    pw_hint: "Au moins {0} caractères. La longueur prime sur la complexité — pas d’autre règle.",
+    name_hint: "Lettres, chiffres, point, tiret ou tiret bas.",
+    folder_hint2: "Vide pour donner accès à tout le dépôt.",
+    quota_warn: "se remplit", quota_full: "presque plein",
+    err_required: "Obligatoire",
   },
 };
 
@@ -294,45 +306,37 @@ function toast(msg, kind = "") {
 }
 
 /* Stands in for confirm() and prompt(), whose appearance the browser dictates.
- * Resolves with the typed value, or null when dismissed. */
-function ask({ title, message, value, placeholder, confirmLabel, danger = false }) {
+ * Resolves with the typed value, or null when dismissed. The input carries a
+ * visible label rather than a placeholder: a placeholder disappears the moment
+ * someone types, taking the question with it (R26). */
+function ask({ title, message, value, label, placeholder, confirmLabel, danger = false }) {
   return new Promise((resolve) => {
-    const wrap = document.createElement("div");
-    wrap.className = "sheet";
-    wrap.innerHTML = `
-      <form class="sheet-card">
-        <h2>${escapeHTML(title)}</h2>
-        ${message ? `<p class="sheet-msg">${escapeHTML(message)}</p>` : ""}
-        ${value !== undefined
-        ? `<input class="sheet-input" type="text" value="${escapeHTML(value)}"
-                  placeholder="${escapeHTML(placeholder || "")}" spellcheck="false">`
-        : ""}
+    const hasInput = value !== undefined;
+    const { wrap, close: shut } = sheet(`
+      <h2>${escapeHTML(title)}</h2>
+      ${message ? `<p class="sheet-msg">${escapeHTML(message)}</p>` : ""}
+      <form>
+        ${hasInput ? `
+        <label class="field"><span>${escapeHTML(label || title)}</span>
+          <input class="sheet-input" type="text" value="${escapeHTML(value)}"
+                 placeholder="${escapeHTML(placeholder || "")}" spellcheck="false">
+        </label>` : ""}
         <div class="sheet-actions">
           <button type="button" class="btn btn-ghost" data-cancel>${escapeHTML(t("cancel"))}</button>
           <button type="submit" class="btn ${danger ? "btn-danger" : "btn-primary"}">
             ${escapeHTML(confirmLabel || t("sign_in"))}
           </button>
         </div>
-      </form>`;
+      </form>`, false, title);
 
-    const close = (result) => {
-      document.removeEventListener("keydown", onKey);
-      wrap.remove();
-      resolve(result);
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); close(null); }
-    };
-
+    const close = (result) => { shut(); resolve(result); };
+    wrap.addEventListener("sheet:dismissed", () => resolve(null));
     wrap.querySelector("[data-cancel]").onclick = () => close(null);
-    wrap.onmousedown = (e) => { if (e.target === wrap) close(null); };
     wrap.querySelector("form").onsubmit = (e) => {
       e.preventDefault();
       const input = wrap.querySelector(".sheet-input");
       close(input ? input.value.trim() : true);
     };
-    document.addEventListener("keydown", onKey);
-    document.body.append(wrap);
     const input = wrap.querySelector(".sheet-input");
     if (input) { input.focus(); input.select(); }
   });
@@ -425,11 +429,14 @@ function headerRow() {
   const head = document.createElement("div");
   head.className = "list-head";
   const cols = [["", ""], ["name", t("col_name")], ["size", t("col_size")], ["date", t("col_date")]];
+  // The class per column is what lets the narrow layout hide exactly the same
+  // cells the rows hide. Without it the header keeps five cells in a grid of
+  // three and folds onto a second line.
   head.innerHTML = cols.map(([k, label], i) => {
     if (!label) return "<span></span>";
     const on = state.sort.key === k;
     const arrow = on ? (state.sort.dir === 1 ? " ↑" : " ↓") : "";
-    return `<button class="col-btn${i === 2 ? " num" : ""}${on ? " is-sorted" : ""}"
+    return `<button class="col-btn col-${k}${i === 2 ? " num" : ""}${on ? " is-sorted" : ""}"
               data-sort="${k}">${escapeHTML(label)}${arrow}</button>`;
   }).join("") + "<span></span>";
 
@@ -837,7 +844,10 @@ async function refreshQuota() {
   const fill = $("quotaFill");
   fill.style.width = `${Math.max(pct, 1.5)}%`;
   fill.className = pct > 92 ? "is-bad" : pct > 78 ? "is-warn" : "";
-  $("quotaText").textContent = t("quota", bytes(q.used), bytes(q.total), bytes(q.free));
+  // The bar changes colour; colour alone says nothing to a good share of people,
+  // so the state is spelled out as well (R18).
+  const state = pct > 92 ? ` · ${t("quota_full")}` : pct > 78 ? ` · ${t("quota_warn")}` : "";
+  $("quotaText").textContent = t("quota", bytes(q.used), bytes(q.total), bytes(q.free)) + state;
 }
 
 function setLang(lang) {
@@ -854,6 +864,7 @@ async function boot() {
     document.title = s.title;
     $("loginTitle").textContent = s.title;
   }
+  setupTheme();
   document.body.classList.remove("booting");
   if (!s.authenticated) {
     $("loginUser").focus();
@@ -879,20 +890,105 @@ function enterApp(s) {
 
 /* ── accounts ─────────────────────────────────────────────────────── */
 
-/** Bare overlay both panels below sit in. Returns a close function. */
-function sheet(inner, wide = false) {
+/** Overlay every panel below sits in.
+ *
+ * Opening one moves focus into it, Tab cycles inside it, Escape and a click
+ * outside close it, and focus returns to whatever opened it. Without that, a
+ * keyboard lands behind the dialog and operates a page it cannot see (R81).
+ */
+function sheet(inner, wide = false, label = "") {
+  const opener = document.activeElement;
   const wrap = document.createElement("div");
   wrap.className = "sheet";
-  wrap.innerHTML = `<div class="sheet-card${wide ? " is-wide" : ""}">${inner}</div>`;
+  wrap.innerHTML = `<div class="sheet-card${wide ? " is-wide" : ""}" role="dialog"
+      aria-modal="true" aria-label="${escapeHTML(label)}" tabindex="-1">${inner}</div>`;
+  const card = wrap.querySelector(".sheet-card");
+
+  const reachable = () => [...card.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+  )].filter((el) => el.offsetWidth || el.offsetHeight);
+
   const close = () => {
-    document.removeEventListener("keydown", onKey);
+    document.removeEventListener("keydown", onKey, true);
+    // Anyone awaiting this overlay has to hear about Escape and outside clicks,
+    // or the promise never settles.
+    wrap.dispatchEvent(new CustomEvent("sheet:dismissed"));
     wrap.remove();
+    if (!document.querySelector(".sheet")) document.body.classList.remove("has-dialog");
+    opener?.focus?.();
   };
-  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+
+  const onKey = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key !== "Tab") return;
+    const f = reachable();
+    if (!f.length) { e.preventDefault(); card.focus(); return; }
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+
   wrap.onmousedown = (e) => { if (e.target === wrap) close(); };
-  document.addEventListener("keydown", onKey);
+  document.addEventListener("keydown", onKey, true);
+  document.body.classList.add("has-dialog");
   document.body.append(wrap);
-  return { wrap, close };
+  (reachable()[0] || card).focus();
+
+  wirePasswordToggles(wrap);
+  return { wrap, card, close };
+}
+
+/** A labelled password field: visible label, reveal toggle, rule stated upfront.
+ *  Requirements a user only discovers by failing are a design failure (R67). */
+function passwordField(attr, labelKey, { hint = false, autocomplete = "new-password" } = {}) {
+  return `
+    <label class="field"><span>${escapeHTML(t(labelKey))}</span>
+      <span class="pw-wrap">
+        <input type="password" ${attr} autocomplete="${autocomplete}">
+        <button type="button" class="pw-toggle" data-pw-toggle
+                aria-label="${escapeHTML(t("pw_show"))}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </span>
+      ${hint ? `<p class="field-hint">${escapeHTML(t("pw_hint", 10))}</p>` : ""}
+    </label>`;
+}
+
+function wirePasswordToggles(root) {
+  for (const b of root.querySelectorAll("[data-pw-toggle]")) {
+    b.onclick = () => {
+      const input = b.closest(".pw-wrap").querySelector("input");
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      b.classList.toggle("is-on", show);
+      b.setAttribute("aria-label", show ? t("pw_hide") : t("pw_show"));
+      input.focus();
+    };
+  }
+}
+
+/** Puts the message next to the field that caused it, not in a banner far from
+ *  it — and in words, never a red border alone (R28/R18). */
+function fieldError(input, message) {
+  clearFieldError(input);
+  if (!message) return;
+  input.setAttribute("aria-invalid", "true");
+  const p = document.createElement("p");
+  p.className = "field-error";
+  p.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"
+      stroke-linecap="round"/></svg><span></span>`;
+  p.querySelector("span").textContent = message;
+  (input.closest(".field") || input.parentElement).append(p);
+}
+
+function clearFieldError(input) {
+  input.removeAttribute("aria-invalid");
+  const holder = input.closest(".field") || input.parentElement;
+  holder?.querySelector(".field-error")?.remove();
 }
 
 /** Turns a server error code into a sentence from the dictionary. */
@@ -926,31 +1022,30 @@ async function callAPI(method, url, body) {
 function openPasswordSheet() {
   const { wrap, close } = sheet(`
     <h2>${escapeHTML(t("change_password"))}</h2>
-    <p class="sheet-msg" data-err hidden></p>
-    <label class="field"><span>${escapeHTML(t("pw_current"))}</span>
-      <input type="password" data-cur autocomplete="current-password"></label>
-    <label class="field"><span>${escapeHTML(t("pw_new"))}</span>
-      <input type="password" data-new autocomplete="new-password"></label>
+    ${passwordField('data-cur', "pw_current", { autocomplete: "current-password" })}
+    ${passwordField('data-new', "pw_new", { hint: true })}
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-cancel>${escapeHTML(t("cancel"))}</button>
       <button class="btn btn-primary" data-ok>${escapeHTML(t("change_password"))}</button>
-    </div>`);
+    </div>`, false, t("change_password"));
 
-  const err = wrap.querySelector("[data-err]");
+  const cur = wrap.querySelector("[data-cur]");
+  const nw = wrap.querySelector("[data-new]");
+  cur.oninput = () => clearFieldError(cur);
+  nw.oninput = () => clearFieldError(nw);
+  // R28: checked when the field is left, never while someone is still typing.
+  nw.onblur = () => { if (nw.value && nw.value.length < 10) fieldError(nw, t("err_weak", 10)); };
+
   wrap.querySelector("[data-cancel]").onclick = close;
-  wrap.querySelector("[data-cur]").focus();
   wrap.querySelector("[data-ok]").onclick = async () => {
-    err.hidden = true;
+    if (!cur.value) return fieldError(cur, t("err_required"));
+    if (nw.value.length < 10) return fieldError(nw, t("err_weak", 10));
     try {
-      await callAPI("POST", "/api/password", {
-        current: wrap.querySelector("[data-cur]").value,
-        new: wrap.querySelector("[data-new]").value,
-      });
+      await callAPI("POST", "/api/password", { current: cur.value, new: nw.value });
       close();
       toast(t("pw_saved"), "ok");
     } catch (e) {
-      err.textContent = e.message;
-      err.hidden = false;
+      fieldError(e.message === t("err_login") ? cur : nw, e.message);
     }
   };
 }
@@ -961,19 +1056,23 @@ async function openAccountsSheet() {
     <p class="sheet-msg" data-err hidden></p>
     <div class="acc-list" data-list></div>
     <form class="acc-new">
-      <input type="text" data-name placeholder="${escapeHTML(t("acc_name"))}" spellcheck="false"
-             autocapitalize="none">
-      <input type="password" data-pass placeholder="${escapeHTML(t("pw_new"))}"
-             autocomplete="new-password">
-      <input type="text" data-root placeholder="${escapeHTML(t("acc_folder"))}" spellcheck="false">
+      <label class="field"><span>${escapeHTML(t("acc_name"))}</span>
+        <input type="text" data-name spellcheck="false" autocapitalize="none"
+               autocomplete="off">
+        <p class="field-hint">${escapeHTML(t("name_hint"))}</p>
+      </label>
+      ${passwordField("data-pass", "pw_new", { hint: true })}
+      <label class="field"><span>${escapeHTML(t("acc_folder"))}</span>
+        <input type="text" data-root spellcheck="false" autocomplete="off">
+        <p class="field-hint">${escapeHTML(t("folder_hint2"))}</p>
+      </label>
       <label class="acc-check"><input type="checkbox" data-admin>
         <span>${escapeHTML(t("acc_admin"))}</span></label>
       <button class="btn btn-primary" type="submit">${escapeHTML(t("acc_add"))}</button>
     </form>
-    <p class="sheet-hint">${escapeHTML(t("acc_folder"))} — ${escapeHTML(t("acc_folder_hint"))}</p>
     <div class="sheet-actions">
       <button class="btn btn-ghost" data-close>${escapeHTML(t("close"))}</button>
-    </div>`, true);
+    </div>`, true, t("acc_title"));
 
   const err = wrap.querySelector("[data-err]");
   const list = wrap.querySelector("[data-list]");
@@ -995,7 +1094,8 @@ async function openAccountsSheet() {
           <strong>${escapeHTML(u.name)}</strong>
           ${u.self ? `<em>${escapeHTML(t("acc_you"))}</em>` : ""}
           ${u.admin ? `<span class="tag">${escapeHTML(t("acc_admin"))}</span>` : ""}
-          <span class="acc-root">${u.root ? escapeHTML(u.root) : escapeHTML(t("acc_whole"))}</span>
+          <button type="button" class="acc-root" title="${escapeHTML(t("acc_move"))}">${
+            u.root ? escapeHTML(u.root) : escapeHTML(t("acc_whole"))}</button>
         </span>
         <span class="acc-act">
           <button data-reset title="${escapeHTML(t("acc_reset"))}">${ICON.pencil}</button>
@@ -1059,14 +1159,42 @@ async function openAccountsSheet() {
         root: f("[data-root]").value.trim(),
         admin: f("[data-admin]").checked,
       });
+      clearFieldError(f("[data-name]")); clearFieldError(f("[data-pass]"));
       f("[data-name]").value = ""; f("[data-pass]").value = "";
       f("[data-root]").value = ""; f("[data-admin]").checked = false;
       toast(t("acc_created"), "ok");
       render();
-    } catch (e2) { fail(e2); }
+    } catch (e2) {
+      const target = /name|exist/i.test(e2.message) ? f("[data-name]") : f("[data-pass]");
+      fieldError(target, e2.message);
+    }
   };
 
   render();
+}
+
+
+/* ── theme ────────────────────────────────────────────────────────────── */
+
+/* R59: the system preference is the default, but the choice has to be the
+ * user's and it has to survive a reload. */
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+  else { root.removeAttribute("data-theme"); mode = "system"; }
+  localStorage.setItem("drop.theme", mode);
+  for (const b of document.querySelectorAll("#themeSeg button")) {
+    b.classList.toggle("is-on", b.dataset.theme === mode);
+    b.setAttribute("aria-pressed", String(b.dataset.theme === mode));
+  }
+}
+
+function setupTheme() {
+  const seg = $("themeSeg");
+  seg.innerHTML = ["system", "light", "dark"].map((m) =>
+    `<button type="button" data-theme="${m}">${escapeHTML(t("theme_" + m))}</button>`).join("");
+  for (const b of seg.querySelectorAll("button")) b.onclick = () => applyTheme(b.dataset.theme);
+  applyTheme(localStorage.getItem("drop.theme") || "system");
 }
 
 /* ── wiring ───────────────────────────────────────────────────────── */

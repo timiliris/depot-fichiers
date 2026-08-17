@@ -78,7 +78,8 @@ never exposed.
 - New folder, rename, delete — through our own dialogs, no browser windows
 - Volume usage indicator
 - English and French interface, picked from the browser or pinned in the config
-- Dark and light theme following the system, usable by thumb on a phone
+- Dark and light theme following the system, with an explicit override that sticks
+- Usable at 320px, by thumb, and by keyboard alone
 
 ## Setup
 
@@ -250,6 +251,27 @@ dependency. The server answers with stable error codes (`bad_credentials`,
 `throttled`, `session_expired`) precisely so the wording stays in that one place.
 
 <img src="docs/list-fr.png" alt="French interface" width="60%">
+
+## Accessibility
+
+Audited against a 168-rule UI/UX rulebook (Nielsen Norman Group, WCAG 2.2, Laws of
+UX, Baymard) rather than by eye, which is how the following got caught:
+
+- **Every colour pair is measured**, not judged: 4.5:1 for text, 3:1 for anything
+  a pointer or a keyboard must find. The light theme was the worse of the two —
+  its green, amber and red all had to be darkened hard to clear 4.5:1 on white.
+- **Dialogs trap focus and give it back.** `role="dialog"`, `aria-modal`, Tab
+  cycling inside, Escape to leave, focus returned to whatever opened them.
+- **Labels are visible, never placeholders.** A placeholder disappears the moment
+  someone types, taking the question with it.
+- **Password rules are stated upfront**, with a reveal toggle, everywhere a
+  password is typed — not revealed by failing.
+- **Touch targets reach 44px on a coarse pointer**, and the row action column is
+  sized from that so three of them cannot overflow it.
+- **Errors sit next to their field**, in words and an icon, never a red border
+  alone — and are checked on blur, not while someone is still typing.
+- **320px wide works**: one column, no horizontal scroll, keyboard-reachable
+  actions visible when focused rather than only on hover.
 
 ## Security
 

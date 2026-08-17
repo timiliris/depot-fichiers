@@ -1,7 +1,9 @@
 /* ── tokens ──────────────────────────────────────────────────────────── */
+/* Dark is the default; the light values are repeated under both the media query
+   and an explicit [data-theme], so the manual override wins in either direction
+   (R59). Every pair below was measured: 4.5:1 for text, 3:1 for anything a
+   pointer or a keyboard has to find (R16). */
 :root {
-  color-scheme: dark light;
-
   --bg: #0d1014;
   --bg-sunken: #090b0e;
   --surface: #14181e;
@@ -9,10 +11,13 @@
   --surface-3: #232932;
   --line: #262d36;
   --line-soft: #1d232b;
+  /* Borders a user must actually see — inputs, focusable controls. The hairline
+     above is decorative and deliberately stays quieter. */
+  --line-strong: #56657a;
 
   --text: #e6eaf0;
   --text-dim: #98a2b0;
-  --text-faint: #6b7683;
+  --text-faint: #76818f;
 
   --accent: #4da3ff;
   --accent-soft: #4da3ff1f;
@@ -20,6 +25,10 @@
   --ok: #3ecf8e;
   --warn: #e8b339;
   --bad: #f2637e;
+
+  /* Width of the per-row action column. It has to follow the target size, or
+     three 44px touch targets overflow a column sized for 28px ones. */
+  --actions-w: 5.7rem;
 
   --radius: 10px;
   --radius-lg: 16px;
@@ -29,10 +38,14 @@
   --ease: cubic-bezier(.32, .72, 0, 1);
   --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  color-scheme: dark;
 }
 
+/* The semantic colours are not the dark ones dimmed: green, amber and red all
+   had to be darkened hard to clear 4.5:1 on white. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #f6f7f9;
     --bg-sunken: #eceef2;
     --surface: #ffffff;
@@ -40,17 +53,51 @@
     --surface-3: #e7eaef;
     --line: #dde1e8;
     --line-soft: #e8ebf0;
+    --line-strong: #8795ae;
 
     --text: #131722;
     --text-dim: #5c6675;
-    --text-faint: #8b95a3;
+    --text-faint: #6c7788;
 
     --accent: #0b6dd4;
     --accent-soft: #0b6dd414;
     --accent-text: #ffffff;
+    --ok: #218659;
+    --warn: #987012;
+    --bad: #ea143c;
+
     --shadow: 0 1px 2px #0f172a12, 0 8px 24px -12px #0f172a26;
     --shadow-lg: 0 24px 60px -20px #0f172a2e, 0 2px 8px #0f172a14;
+
+    color-scheme: light;
   }
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-sunken: #eceef2;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e7eaef;
+  --line: #dde1e8;
+  --line-soft: #e8ebf0;
+  --line-strong: #8795ae;
+
+  --text: #131722;
+  --text-dim: #5c6675;
+  --text-faint: #6c7788;
+
+  --accent: #0b6dd4;
+  --accent-soft: #0b6dd414;
+  --accent-text: #ffffff;
+  --ok: #218659;
+  --warn: #987012;
+  --bad: #ea143c;
+
+  --shadow: 0 1px 2px #0f172a12, 0 8px 24px -12px #0f172a26;
+  --shadow-lg: 0 24px 60px -20px #0f172a2e, 0 2px 8px #0f172a14;
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -122,7 +169,7 @@ button, input { font: inherit; color: inherit; }
 
 .btn-ghost {
   background: transparent;
-  border-color: var(--line);
+  border-color: var(--line-strong);
   color: var(--text-dim);
 }
 .btn-ghost:hover { background: var(--surface-2); color: var(--text); }
@@ -207,7 +254,7 @@ button, input { font: inherit; color: inherit; }
   width: 100%;
   padding: .6rem .7rem;
   background: var(--bg-sunken);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   transition: border-color .16s var(--ease), background .16s var(--ease);
 }
@@ -398,12 +445,16 @@ button, input { font: inherit; color: inherit; }
 /* ── content ─────────────────────────────────────────────────────────── */
 .content { flex: 1; padding: 0 1rem 6rem; }
 
+/* The top bar is sticky, so anything reached by keyboard needs room to clear it
+   when the browser scrolls it into view (R44). */
+.row, .col-btn, .crumb { scroll-margin-top: 4.5rem; }
+
 .listing { display: flex; flex-direction: column; }
 
 /* list */
 .row {
   display: grid;
-  grid-template-columns: 2.2rem minmax(0, 1fr) 6rem 9.5rem 5.7rem;
+  grid-template-columns: 2.2rem minmax(0, 1fr) 6rem 9.5rem var(--actions-w);
   align-items: center;
   gap: .6rem;
   padding: .5rem .6rem;
@@ -412,7 +463,8 @@ button, input { font: inherit; color: inherit; }
   transition: background .12s;
 }
 .row:hover { background: var(--surface); }
-.row:hover .row-actions { opacity: 1; }
+.row:hover .row-actions,
+.row:focus-within .row-actions { opacity: 1; }
 
 .row-icon { display: grid; place-items: center; color: var(--text-faint); }
 .row-icon svg { width: 19px; height: 19px; }
@@ -474,7 +526,7 @@ button, input { font: inherit; color: inherit; }
 
 .list-head {
   display: grid;
-  grid-template-columns: 2.2rem minmax(0, 1fr) 6rem 9.5rem 5.7rem;
+  grid-template-columns: 2.2rem minmax(0, 1fr) 6rem 9.5rem var(--actions-w);
   gap: .6rem;
   padding: 0 .6rem .4rem;
   border-bottom: 1px solid var(--line-soft);
@@ -716,7 +768,7 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
   margin-bottom: 1rem;
   padding: .55rem .7rem;
   background: var(--bg-sunken);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
 }
 .sheet-input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
@@ -766,7 +818,8 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
 
 /* Clickable on purpose: the confinement folder is changed in place. */
 .acc-root {
-  padding: .05rem .4rem;
+  border: 0;
+  padding: .1rem .4rem;
   border-radius: 6px;
   background: var(--surface-3);
   color: var(--text-dim);
@@ -789,32 +842,30 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
 .acc-act .is-danger:hover { color: var(--bad); background: color-mix(in oklab, var(--bad) 14%, transparent); }
 .acc-act svg { width: 15px; height: 15px; }
 
-.acc-new {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: .5rem;
-  align-items: center;
-}
+/* One column: labels and their hints read badly side by side, and it is what a
+   narrow screen collapses to anyway (R89). */
+.acc-new { display: block; }
+.acc-new .field { margin-bottom: .7rem; }
 .acc-new input[type="text"], .acc-new input[type="password"] {
-  padding: .45rem .6rem;
+  width: 100%;
+  padding: .5rem .65rem;
   background: var(--bg-sunken);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   font-size: .875rem;
   min-width: 0;
 }
 .acc-new input:focus { outline: none; border-color: var(--accent); }
+.acc-new button[type="submit"] { width: 100%; margin-top: .3rem; }
 .acc-check {
   display: flex; align-items: center; gap: .4rem;
+  margin-bottom: .6rem;
   font-size: .8125rem;
   color: var(--text-dim);
 }
 
-.acc-new button[type="submit"] { grid-column: 1 / -1; }
 
-@media (max-width: 560px) {
-  .acc-new { grid-template-columns: 1fr; }
-}
+
 
 .btn-danger {
   background: var(--bad);
@@ -846,10 +897,11 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
 
 /* ── small screens ───────────────────────────────────────────────────── */
 @media (max-width: 720px) {
-  .row { grid-template-columns: 2.2rem minmax(0, 1fr) 5.7rem; }
-  .row-date, .list-head .row-date-col { display: none; }
-  .list-head { grid-template-columns: 2.2rem minmax(0, 1fr) 5.7rem; }
-  .row-size { display: none; }
+  .row { grid-template-columns: 2.2rem minmax(0, 1fr) var(--actions-w); }
+  .list-head { grid-template-columns: 2.2rem minmax(0, 1fr) var(--actions-w); }
+  /* Rows and header must drop the same two columns, or the header folds. */
+  .row-size, .row-date,
+  .list-head .col-size, .list-head .col-date { display: none; }
   .listing.is-grid .row-size { display: block; }
   .row-actions { opacity: 1; }
   .search input { width: 8rem; }
@@ -859,6 +911,80 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
   .topbar { padding: .6rem .7rem; }
   .uploads { right: .5rem; left: .5rem; bottom: .5rem; width: auto; }
 }
+
+
+/* ── touch, keyboard, motion ────────────────────────────────────────── */
+
+/* R43: 44px on a finger. The visual size stays as drawn — padding does the
+   growing — so the desktop density is untouched. */
+@media (pointer: coarse) {
+  :root { --actions-w: 8.6rem; }
+
+  .row-actions button, .row-actions a,
+  .acc-act button,
+  .up-ctl button,
+  .uploads-toggle,
+  .pw-toggle,
+  .seg-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .btn { min-height: 44px; }
+  .crumb { padding: .5rem .55rem; }
+}
+
+/* R89/R44: at 320px everything is one column and nothing scrolls sideways. */
+@media (max-width: 420px) {
+  .toolbar > .btn { flex: 1 1 100%; }
+  .toolbar .seg { margin-left: auto; }
+  .sheet { padding: .6rem; }
+  .sheet-card { padding: 1rem; }
+  .login-card { padding: 1.5rem 1.1rem 1.25rem; }
+  .modal-name { font-size: .8125rem; }
+}
+
+/* R81: the page behind a dialog is inert, so Tab cannot wander out of it. */
+body.has-dialog .app,
+body.has-dialog .login { pointer-events: none; }
+body.has-dialog .app > *:not(.sheet) { user-select: none; }
+
+/* A field that failed validation says so in text as well as colour (R18/R28). */
+.field-error {
+  display: flex;
+  align-items: flex-start;
+  gap: .35rem;
+  margin: .3rem 0 0;
+  color: var(--bad);
+  font-size: .75rem;
+}
+.field-error svg { width: 13px; height: 13px; flex: none; margin-top: .15rem; }
+.field input[aria-invalid="true"],
+.sheet-input[aria-invalid="true"] { border-color: var(--bad); }
+
+.field-hint {
+  margin: .3rem 0 0;
+  font-size: .75rem;
+  color: var(--text-faint);
+}
+
+/* Theme switch inside the account menu. */
+.theme-row {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .45rem .5rem;
+  font-size: .875rem;
+}
+.theme-row > span { flex: 1; color: var(--text); }
+.theme-seg { display: flex; padding: 2px; background: var(--surface-2); border-radius: 8px; }
+.theme-seg button {
+  padding: .25rem .5rem;
+  border: 0; border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: .75rem;
+  cursor: pointer;
+}
+.theme-seg button:hover { color: var(--text); }
+.theme-seg button.is-on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
