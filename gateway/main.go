@@ -75,8 +75,8 @@ type attempt struct {
 }
 
 func main() {
-	hashPw := flag.String("hash", "", "print a PBKDF2 hash for this password and exit")
-	cfgPath := flag.String("config", "/etc/depot-gw/config.json", "path to the config file")
+	hashPw := flag.String("hash", "", "affiche l'empreinte PBKDF2 de ce mot de passe et quitte")
+	cfgPath := flag.String("config", "/etc/depot-gw/config.json", "chemin du fichier de configuration")
 	flag.Parse()
 
 	if *hashPw != "" {
@@ -86,11 +86,11 @@ func main() {
 
 	raw, err := os.ReadFile(*cfgPath)
 	if err != nil {
-		log.Fatalf("read config: %v", err)
+		log.Fatalf("lecture de la config : %v", err)
 	}
 	var cfg config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		log.Fatalf("parse config: %v", err)
+		log.Fatalf("config illisible : %v", err)
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = ":5100"
@@ -102,15 +102,21 @@ func main() {
 		cfg.Title = "Dépôt"
 	}
 	if len(cfg.Secret) < 32 {
-		log.Fatal("config: secret must be at least 32 characters")
+		log.Fatal("config : « secret » doit faire au moins 32 caractères")
+	}
+	// Le secret du gabarit est publié dans le dépôt : quiconque l'oublie laisse
+	// n'importe qui forger un cookie de session valide. Il fait la bonne
+	// longueur, donc le contrôle ci-dessus ne l'attrape pas.
+	if strings.Contains(cfg.Secret, "REMPLACEZ") {
+		log.Fatal("config : le « secret » du gabarit doit être remplacé — openssl rand -base64 48")
 	}
 	if len(cfg.Users) == 0 {
-		log.Fatal("config: no users defined")
+		log.Fatal("config : aucun compte défini")
 	}
 
 	up, err := url.Parse(cfg.Upstream)
 	if err != nil {
-		log.Fatalf("parse upstream: %v", err)
+		log.Fatalf("URL amont invalide : %v", err)
 	}
 
 	srv := &server{

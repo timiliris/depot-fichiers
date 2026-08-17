@@ -11,6 +11,20 @@ apporte les deux morceaux qui manquaient : une authentification par session avec
 une vraie page de connexion, et un envoi découpé en tranches capable de traverser
 un proxy qui plafonne la taille des requêtes.
 
+![Liste des fichiers](docs/liste.png)
+
+<table>
+  <tr>
+    <td width="66%"><img src="docs/connexion.png" alt="Page de connexion"></td>
+    <td><img src="docs/mobile.png" alt="Affichage sur téléphone"></td>
+  </tr>
+</table>
+
+Les captures sont produites par [`docs/captures.py`](docs/captures.py), qui sert
+les vrais fichiers d'interface avec des données de démonstration — donc elles se
+régénèrent après une modification du style, et ne montrent jamais le contenu
+d'une installation réelle.
+
 ## Pourquoi ce n'est pas juste « dufs derrière un proxy »
 
 Deux contraintes ont dicté l'architecture. Chacune se paie si on l'ignore.
@@ -78,25 +92,69 @@ Voir [`sftp/README.md`](sftp/README.md). Le point à ne pas manquer : c'est une
 Ajouter des comptes SFTP au sshd du port 22 obligerait à exposer publiquement le
 port qui sert aussi la connexion root.
 
-### 3. Le service web
+### 3. Les deux fichiers de configuration
+
+Il en faut **deux**, un par étage. Ils sont dans `.gitignore` : à créer depuis les
+gabarits.
 
 ```bash
-cp gateway/config.example.json gateway/config.json
-docker compose build
-docker compose run --rm --no-deps --entrypoint depot-gw depot-web -hash 'le-mot-de-passe'
+cp dufs.example.yaml       config.yaml          # le stockage
+cp gateway/config.example.json gateway/config.json   # la passerelle
 ```
 
-Reporter l'empreinte obtenue dans `gateway/config.json`, y mettre un `secret`
-aléatoire d'au moins 32 caractères (`openssl rand -base64 48`), puis :
+Oublier `config.yaml` est l'erreur la plus facile : Docker crée alors un *dossier*
+de ce nom et le stockage refuse de démarrer sur `Is a directory (os error 21)`.
+
+### 4. Le chemin des données et l'identité
+
+Le service écrit dans le dossier partagé avec le SFTP, et doit le faire sous le
+même compte, sinon les fichiers déposés par une voie ne sont pas gérables par
+l'autre. Ça se règle dans un `.env` à côté du `docker-compose.yml` :
+
+```ini
+DEPOT_DATA=/srv/depot/invite/upload   # le dossier servi, celui du chroot SFTP
+DEPOT_UID=1001                        # id du compte SFTP: id -u invite
+DEPOT_GID=1001                        # id -g invite
+DEPOT_BIND=127.0.0.1                  # adresse de publication, laissée au proxy
+```
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `DEPOT_DATA` | `/srv/depot/upload` | dossier servi, partagé avec le SFTP |
+| `DEPOT_UID` / `DEPOT_GID` | `1001` | compte sous lequel les fichiers sont écrits |
+| `DEPOT_BIND` | `127.0.0.1` | adresse d'écoute publiée, port 8099 |
+
+### 5. Les comptes
+
+```bash
+docker compose build
+docker run --rm depot-gw:1 -hash 'le-mot-de-passe'
+```
+
+Reporter l'empreinte obtenue dans `gateway/config.json`, et **remplacer le
+`secret`** par une valeur aléatoire :
+
+```bash
+openssl rand -base64 48
+```
+
+Le secret du gabarit est publié ici : le laisser en place permettrait à n'importe
+qui de forger un cookie de session valide. Le service refuse de démarrer tant
+qu'il n'est pas changé.
 
 ```bash
 docker compose up -d
 ```
 
-Le service écoute sur `${DEPOT_BIND}:8099`, par défaut `127.0.0.1`. Poser un
-proxy inverse devant pour le TLS et le nom public.
+Vérifier que les deux étages tiennent :
 
-### 4. Derrière un proxy inverse
+```bash
+docker compose ps
+docker compose logs depot-stockage    # doit annoncer son écoute, pas une erreur
+curl -si localhost:8099/ | head -1    # 200, et aucun en-tête WWW-Authenticate
+```
+
+### 6. Derrière un proxy inverse
 
 Deux réglages ne sont pas optionnels si des fichiers volumineux doivent passer :
 
@@ -110,6 +168,18 @@ proxy_send_timeout 3600s;
 `proxy_request_buffering off` est le plus facile à oublier et le plus coûteux :
 sans lui, un envoi de 20 Go est d'abord écrit en entier sur le disque de la
 machine qui héberge le proxy.
+
+## Mettre à jour
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+L'image dufs est épinglée dans le `docker-compose.yml`. Elle peut être montée de
+version librement : l'interface est servie par la passerelle, pas par dufs, donc
+rien à reporter côté stockage.
 
 ## Configuration
 

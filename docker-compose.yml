@@ -12,7 +12,6 @@
 services:
   depot-stockage:
     image: sigoden/dufs:v0.46.0
-    container_name: depot-stockage
     restart: unless-stopped
     user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
     command: ["-c", "/config.yaml"]
@@ -28,7 +27,6 @@ services:
   depot-web:
     build: ./gateway
     image: depot-gw:1
-    container_name: depot-web
     restart: unless-stopped
     user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
     depends_on:
