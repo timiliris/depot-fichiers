@@ -51,6 +51,7 @@ SCENES = {
     "login": "",
     "mobile": "",
     "grid": "setView(true);",
+    "accounts": "openAccountsSheet();",
     "uploads": """
     const stage = (name, size, sent, status, label) => {
       const u = new Upload({ name, size, slice: () => new Blob() }, name, "/");
@@ -100,9 +101,15 @@ class Stub(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith("/api/session"):
             signed_in = Stub.scene != "login"
             return self._json({
-                "authenticated": signed_in, "user": "camille", "admin": False,
+                "authenticated": signed_in, "user": "camille", "admin": True, "root": "",
                 "title": "Drop", "lang": Stub.lang,
             })
+        if self.path.startswith("/api/users"):
+            return self._json({"users": [
+                {"name": "camille", "admin": True, "root": "", "self": True},
+                {"name": "alex", "admin": False, "root": "alex"},
+                {"name": "jordan", "admin": False, "root": "jordan"},
+            ]})
         if self.path.startswith("/api/quota"):
             return self._json(QUOTA)
         if self.path.startswith("/api/fs/"):
@@ -158,6 +165,7 @@ SHOTS = [
     ("grid",     "en", "grid.png",       1440, 620),
     ("uploads",  "en", "uploads.png",    1440, 700),
     ("login",    "en", "login.png",      1440, 620),
+    ("accounts", "en", "accounts.png",   1440, 700),
     ("mobile",   "en", "mobile.png",      414, 720),
     ("list",     "fr", "list-fr.png",    1440, 620),
 ]

@@ -33,6 +33,9 @@ services:
       - depot-storage
     volumes:
       - ./gateway/config.json:/etc/depot-gw/config.json:ro
+      # the account list is the only state the gateway writes; it must survive a
+      # rebuild, so it lives on a mount rather than in the container layer
+      - ./gateway/state:/var/lib/depot-gw
       # read-only, only to report how full the volume is
       - ${DEPOT_DATA:-/srv/depot/upload}:/data:ro
     ports:

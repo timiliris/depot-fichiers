@@ -45,6 +45,19 @@ const I18N = {
     preview_cut: "… (preview truncated)",
     unit_b: "B", unit_kb: "KB", unit_mb: "MB", unit_gb: "GB", unit_tb: "TB",
     dur_s: "{0}s", dur_min: "{0} min", dur_h: "{0}h {1}min", dur_unknown: "—",
+    change_password: "Change password", manage_accounts: "Accounts",
+    pw_current: "Current password", pw_new: "New password", pw_saved: "Password changed",
+    acc_title: "Accounts", acc_add: "Add an account", acc_name: "Username",
+    acc_folder: "Folder", acc_folder_hint: "leave empty for the whole drop",
+    acc_admin: "Administrator", acc_whole: "whole drop", acc_you: "you",
+    acc_created: "Account created", acc_updated: "Account updated", acc_deleted: "Account deleted",
+    acc_reset: "Reset password", acc_move: "Change folder", acc_promote: "Make administrator",
+    acc_demote: "Remove administrator",
+    acc_del_body: "“{0}” loses access immediately. Their files are not deleted.",
+    err_name: "Letters, digits, dot, dash or underscore, up to 32 characters",
+    err_weak: "At least {0} characters", err_exists: "That name is already taken",
+    err_last_admin: "This is the last administrator", err_not_yourself: "You cannot delete your own account",
+    err_not_admin: "Administrator only", err_outside: "Outside your folder",
   },
   fr: {
     login_sub: "Espace de dépôt privé", field_user: "Identifiant", field_password: "Mot de passe",
@@ -75,6 +88,19 @@ const I18N = {
     preview_cut: "… (aperçu tronqué)",
     unit_b: "o", unit_kb: "Ko", unit_mb: "Mo", unit_gb: "Go", unit_tb: "To",
     dur_s: "{0} s", dur_min: "{0} min", dur_h: "{0} h {1} min", dur_unknown: "—",
+    change_password: "Changer mon mot de passe", manage_accounts: "Comptes",
+    pw_current: "Mot de passe actuel", pw_new: "Nouveau mot de passe", pw_saved: "Mot de passe changé",
+    acc_title: "Comptes", acc_add: "Ajouter un compte", acc_name: "Identifiant",
+    acc_folder: "Dossier", acc_folder_hint: "vide pour tout le dépôt",
+    acc_admin: "Administrateur", acc_whole: "tout le dépôt", acc_you: "vous",
+    acc_created: "Compte créé", acc_updated: "Compte modifié", acc_deleted: "Compte supprimé",
+    acc_reset: "Réinitialiser le mot de passe", acc_move: "Changer de dossier",
+    acc_promote: "Nommer administrateur", acc_demote: "Retirer l’administration",
+    acc_del_body: "« {0} » perd l’accès immédiatement. Ses fichiers ne sont pas supprimés.",
+    err_name: "Lettres, chiffres, point, tiret ou tiret bas, 32 caractères au plus",
+    err_weak: "Au moins {0} caractères", err_exists: "Cet identifiant est déjà pris",
+    err_last_admin: "C’est le dernier administrateur", err_not_yourself: "Vous ne pouvez pas supprimer votre propre compte",
+    err_not_admin: "Réservé à l’administrateur", err_outside: "Hors de votre dossier",
   },
 };
 
@@ -102,6 +128,13 @@ function translateDOM() {
 
 const state = {
   path: "/",
+  // A confined account is served a subfolder as its whole world. `base` is that
+  // folder; every path stays inside it. The server enforces this on every
+  // request too — this is only so the interface does not offer a door that
+  // would be refused anyway.
+  root: "",
+  base: "/",
+  admin: false,
   entries: [],
   sort: { key: "name", dir: 1 },
   grid: localStorage.getItem("drop.view") === "grid",
@@ -313,7 +346,9 @@ function escapeHTML(s) {
 /* ── navigation and rendering ─────────────────────────────────────── */
 
 async function go(p, push = true) {
-  state.path = p.endsWith("/") ? p : p + "/";
+  let target = p.endsWith("/") ? p : p + "/";
+  if (!target.startsWith(state.base)) target = state.base;
+  state.path = target;
   if (push) history.pushState({ p: state.path }, "", "#" + state.path);
   document.body.classList.add("is-loading");
   try {
@@ -334,7 +369,10 @@ function renderAll() {
 }
 
 function renderCrumbs() {
-  const parts = state.path.split("/").filter(Boolean);
+  // Shown relative to the account's own root: a confined guest should not read
+  // the folder name it happens to be pinned to on every screen.
+  const rel = state.path.slice(state.base.length);
+  const parts = rel.split("/").filter(Boolean);
   const bc = $("breadcrumb");
   bc.innerHTML = "";
 
@@ -346,13 +384,13 @@ function renderCrumbs() {
     bc.append(b);
   };
 
-  add(t("root"), "/", parts.length === 0);
+  add(t("root"), state.base, parts.length === 0);
   parts.forEach((seg, i) => {
     const sep = document.createElement("span");
     sep.className = "crumb-sep";
     sep.textContent = "/";
     bc.append(sep);
-    add(decodeURIComponent(seg), "/" + parts.slice(0, i + 1).join("/") + "/", i === parts.length - 1);
+    add(decodeURIComponent(seg), state.base + parts.slice(0, i + 1).join("/") + "/", i === parts.length - 1);
   });
   bc.scrollLeft = bc.scrollWidth;
 }
@@ -826,13 +864,209 @@ async function boot() {
 
 function enterApp(s) {
   state.user = s.user;
+  state.admin = !!s.admin;
+  state.root = s.root || "";
+  state.base = state.root ? `/${state.root}/` : "/";
   $("signedInAs").innerHTML = t("signed_in_as", `<strong>${escapeHTML(s.user)}</strong>`);
   $("avatar").textContent = s.user.slice(0, 1);
+  $("manageBtn").hidden = !state.admin;
   document.body.classList.add("authed");
   if (state.grid) { $("viewGrid").classList.add("is-on"); $("viewList").classList.remove("is-on"); }
-  const start = decodeURIComponent(location.hash.slice(1)) || "/";
-  go(start.startsWith("/") ? start : "/", false);
+  const start = decodeURIComponent(location.hash.slice(1));
+  go(start.startsWith(state.base) ? start : state.base, false);
   refreshQuota();
+}
+
+/* ── accounts ─────────────────────────────────────────────────────── */
+
+/** Bare overlay both panels below sit in. Returns a close function. */
+function sheet(inner, wide = false) {
+  const wrap = document.createElement("div");
+  wrap.className = "sheet";
+  wrap.innerHTML = `<div class="sheet-card${wide ? " is-wide" : ""}">${inner}</div>`;
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    wrap.remove();
+  };
+  const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } };
+  wrap.onmousedown = (e) => { if (e.target === wrap) close(); };
+  document.addEventListener("keydown", onKey);
+  document.body.append(wrap);
+  return { wrap, close };
+}
+
+/** Turns a server error code into a sentence from the dictionary. */
+function apiError(data, status) {
+  switch (data?.error) {
+    case "bad_name": return t("err_name");
+    case "weak_password": return t("err_weak", 10);
+    case "exists": return t("err_exists");
+    case "last_admin": return t("err_last_admin");
+    case "not_yourself": return t("err_not_yourself");
+    case "not_admin": return t("err_not_admin");
+    case "outside_root": return t("err_outside");
+    case "bad_credentials": return t("err_login");
+    case "throttled": return t("err_throttled", data.retry_after || 60);
+    case "session_expired": return t("err_session");
+    default: return t("err_status", status);
+  }
+}
+
+async function callAPI(method, url, body) {
+  const r = await fetch(url, {
+    method,
+    headers: { "X-Depot": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = r.status === 204 ? {} : await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(apiError(data, r.status));
+  return data;
+}
+
+function openPasswordSheet() {
+  const { wrap, close } = sheet(`
+    <h2>${escapeHTML(t("change_password"))}</h2>
+    <p class="sheet-msg" data-err hidden></p>
+    <label class="field"><span>${escapeHTML(t("pw_current"))}</span>
+      <input type="password" data-cur autocomplete="current-password"></label>
+    <label class="field"><span>${escapeHTML(t("pw_new"))}</span>
+      <input type="password" data-new autocomplete="new-password"></label>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-cancel>${escapeHTML(t("cancel"))}</button>
+      <button class="btn btn-primary" data-ok>${escapeHTML(t("change_password"))}</button>
+    </div>`);
+
+  const err = wrap.querySelector("[data-err]");
+  wrap.querySelector("[data-cancel]").onclick = close;
+  wrap.querySelector("[data-cur]").focus();
+  wrap.querySelector("[data-ok]").onclick = async () => {
+    err.hidden = true;
+    try {
+      await callAPI("POST", "/api/password", {
+        current: wrap.querySelector("[data-cur]").value,
+        new: wrap.querySelector("[data-new]").value,
+      });
+      close();
+      toast(t("pw_saved"), "ok");
+    } catch (e) {
+      err.textContent = e.message;
+      err.hidden = false;
+    }
+  };
+}
+
+async function openAccountsSheet() {
+  const { wrap, close } = sheet(`
+    <h2>${escapeHTML(t("acc_title"))}</h2>
+    <p class="sheet-msg" data-err hidden></p>
+    <div class="acc-list" data-list></div>
+    <form class="acc-new">
+      <input type="text" data-name placeholder="${escapeHTML(t("acc_name"))}" spellcheck="false"
+             autocapitalize="none">
+      <input type="password" data-pass placeholder="${escapeHTML(t("pw_new"))}"
+             autocomplete="new-password">
+      <input type="text" data-root placeholder="${escapeHTML(t("acc_folder"))}" spellcheck="false">
+      <label class="acc-check"><input type="checkbox" data-admin>
+        <span>${escapeHTML(t("acc_admin"))}</span></label>
+      <button class="btn btn-primary" type="submit">${escapeHTML(t("acc_add"))}</button>
+    </form>
+    <p class="sheet-hint">${escapeHTML(t("acc_folder"))} — ${escapeHTML(t("acc_folder_hint"))}</p>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" data-close>${escapeHTML(t("close"))}</button>
+    </div>`, true);
+
+  const err = wrap.querySelector("[data-err]");
+  const list = wrap.querySelector("[data-list]");
+  const fail = (e) => { err.textContent = e.message; err.hidden = false; };
+
+  wrap.querySelector("[data-close]").onclick = close;
+
+  const render = async () => {
+    let data;
+    try {
+      data = await callAPI("GET", "/api/users");
+    } catch (e) { return fail(e); }
+    list.innerHTML = "";
+    for (const u of data.users) {
+      const row = document.createElement("div");
+      row.className = "acc";
+      row.innerHTML = `
+        <span class="acc-id">
+          <strong>${escapeHTML(u.name)}</strong>
+          ${u.self ? `<em>${escapeHTML(t("acc_you"))}</em>` : ""}
+          ${u.admin ? `<span class="tag">${escapeHTML(t("acc_admin"))}</span>` : ""}
+          <span class="acc-root">${u.root ? escapeHTML(u.root) : escapeHTML(t("acc_whole"))}</span>
+        </span>
+        <span class="acc-act">
+          <button data-reset title="${escapeHTML(t("acc_reset"))}">${ICON.pencil}</button>
+          <button data-role title="${escapeHTML(u.admin ? t("acc_demote") : t("acc_promote"))}">${u.admin ? "★" : "☆"}</button>
+          <button data-del class="is-danger" title="${escapeHTML(t("delete"))}">${ICON.trash}</button>
+        </span>`;
+
+      row.querySelector("[data-reset]").onclick = async () => {
+        const pw = await ask({ title: t("acc_reset"), message: u.name, value: "",
+                               placeholder: t("pw_new"), confirmLabel: t("acc_reset") });
+        if (!pw) return;
+        try {
+          await callAPI("PATCH", `/api/users/${encodeURIComponent(u.name)}`, { password: pw });
+          toast(t("acc_updated"), "ok");
+        } catch (e) { fail(e); }
+      };
+
+      row.querySelector("[data-role]").onclick = async () => {
+        try {
+          await callAPI("PATCH", `/api/users/${encodeURIComponent(u.name)}`, { admin: !u.admin });
+          toast(t("acc_updated"), "ok");
+          render();
+        } catch (e) { fail(e); }
+      };
+
+      row.querySelector("[data-del]").onclick = async () => {
+        const ok = await ask({ title: t("delete"), message: t("acc_del_body", u.name),
+                               confirmLabel: t("delete"), danger: true });
+        if (!ok) return;
+        try {
+          await callAPI("DELETE", `/api/users/${encodeURIComponent(u.name)}`);
+          toast(t("acc_deleted"), "ok");
+          render();
+        } catch (e) { fail(e); }
+      };
+
+      // The folder is shown as a button so it can be changed in place.
+      row.querySelector(".acc-root").onclick = async () => {
+        const root = await ask({ title: t("acc_move"), message: t("acc_folder_hint"),
+                                 value: u.root, confirmLabel: t("acc_move") });
+        if (root === null) return;
+        try {
+          await callAPI("PATCH", `/api/users/${encodeURIComponent(u.name)}`, { root });
+          toast(t("acc_updated"), "ok");
+          render();
+        } catch (e) { fail(e); }
+      };
+
+      list.append(row);
+    }
+  };
+
+  wrap.querySelector(".acc-new").onsubmit = async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const f = wrap.querySelector.bind(wrap);
+    try {
+      await callAPI("POST", "/api/users", {
+        name: f("[data-name]").value.trim(),
+        password: f("[data-pass]").value,
+        root: f("[data-root]").value.trim(),
+        admin: f("[data-admin]").checked,
+      });
+      f("[data-name]").value = ""; f("[data-pass]").value = "";
+      f("[data-root]").value = ""; f("[data-admin]").checked = false;
+      toast(t("acc_created"), "ok");
+      render();
+    } catch (e2) { fail(e2); }
+  };
+
+  render();
 }
 
 /* ── wiring ───────────────────────────────────────────────────────── */
@@ -889,6 +1123,9 @@ $("userBtn").onclick = () => {
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".user-menu")) $("userPop").hidden = true;
 });
+
+$("passwordBtn").onclick = () => { $("userPop").hidden = true; openPasswordSheet(); };
+$("manageBtn").onclick = () => { $("userPop").hidden = true; openAccountsSheet(); };
 
 $("logoutBtn").onclick = async () => {
   await fetch("/api/logout", { method: "POST", headers: { "X-Depot": "1" } });
@@ -950,7 +1187,7 @@ document.addEventListener("keydown", (e) => {
 
 window.onpopstate = (e) => {
   if (!document.body.classList.contains("authed")) return;
-  go(e.state?.p || decodeURIComponent(location.hash.slice(1)) || "/", false);
+  go(e.state?.p || decodeURIComponent(location.hash.slice(1)) || state.base, false);
 };
 
 /* full-page drag and drop */

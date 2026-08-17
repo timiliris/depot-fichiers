@@ -723,6 +723,99 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
 
 .sheet-actions { display: flex; justify-content: flex-end; gap: .5rem; }
 
+.sheet-card.is-wide { max-width: 34rem; }
+
+.sheet-hint {
+  margin: .5rem 0 1rem;
+  font-size: .75rem;
+  color: var(--text-faint);
+}
+
+/* ── account list ───────────────────────────────────────────────────── */
+.acc-list {
+  margin-bottom: 1rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.acc {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .6rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.acc:last-child { border-bottom: 0; }
+.acc:hover { background: var(--surface-2); }
+
+.acc-id {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: .4rem;
+  font-size: .875rem;
+  flex-wrap: wrap;
+}
+.acc-id em { color: var(--text-faint); font-size: .75rem; font-style: normal; }
+
+.tag {
+  padding: .05rem .35rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .6875rem;
+  font-weight: 600;
+}
+
+/* Clickable on purpose: the confinement folder is changed in place. */
+.acc-root {
+  padding: .05rem .4rem;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--text-dim);
+  font: 400 .75rem/1.6 var(--mono);
+  cursor: pointer;
+}
+.acc-root:hover { color: var(--text); outline: 1px solid var(--line); }
+
+.acc-act { display: flex; gap: .1rem; }
+.acc-act button {
+  display: grid; place-items: center;
+  width: 1.75rem; height: 1.75rem;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: .875rem;
+  cursor: pointer;
+}
+.acc-act button:hover { background: var(--surface-3); color: var(--text); }
+.acc-act .is-danger:hover { color: var(--bad); background: color-mix(in oklab, var(--bad) 14%, transparent); }
+.acc-act svg { width: 15px; height: 15px; }
+
+.acc-new {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem;
+  align-items: center;
+}
+.acc-new input[type="text"], .acc-new input[type="password"] {
+  padding: .45rem .6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: .875rem;
+  min-width: 0;
+}
+.acc-new input:focus { outline: none; border-color: var(--accent); }
+.acc-check {
+  display: flex; align-items: center; gap: .4rem;
+  font-size: .8125rem;
+  color: var(--text-dim);
+}
+
+.acc-new button[type="submit"] { grid-column: 1 / -1; }
+
+@media (max-width: 560px) {
+  .acc-new { grid-template-columns: 1fr; }
+}
+
 .btn-danger {
   background: var(--bad);
   color: #fff;

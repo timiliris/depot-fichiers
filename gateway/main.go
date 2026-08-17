@@ -42,6 +42,12 @@ type user struct {
 	Name  string `json:"name"`
 	Hash  string `json:"hash"`
 	Admin bool   `json:"admin,omitempty"`
+	// Root confines the account to a subfolder of the served tree. Empty means
+	// the whole drop, so a household can mix confined and unconfined accounts.
+	Root string `json:"root,omitempty"`
+	// Ver is bumped whenever the password changes; it rides inside the signed
+	// cookie so a password change drops every session that account had open.
+	Ver int `json:"ver,omitempty"`
 }
 
 type config struct {
@@ -59,13 +65,19 @@ type config struct {
 	// pick from its own Accept-Language.
 	Lang  string `json:"lang"`
 	Users []user `json:"users"`
+	// UsersFile holds the mutable account list, and defaults next to this file.
+	// Accounts live apart from the operator settings because they are the only
+	// state the program rewrites: a bug there cannot take the secret with it.
+	UsersFile string `json:"users_file"`
 }
 
 type server struct {
-	cfg    config
-	secret []byte
-	proxy  *httputil.ReverseProxy
-	web    fs.FS
+	cfg          config
+	secret       []byte
+	proxy        *httputil.ReverseProxy
+	web          fs.FS
+	users        *store
+	upstreamAuth string
 
 	mu       sync.Mutex
 	attempts map[string]*attempt // login throttle, keyed by client IP
@@ -121,16 +133,28 @@ func main() {
 		log.Fatalf("parse upstream: %v", err)
 	}
 
+	// Deliberately NOT next to config.json: that path is a read-only mount of a
+	// single file, so the accounts would land in the container layer and vanish
+	// on the next rebuild — silently, which is the worst way to lose them.
+	if cfg.UsersFile == "" {
+		cfg.UsersFile = "/var/lib/depot-gw/users.json"
+	}
+	users, err := newStore(cfg.UsersFile, cfg.Users)
+	if err != nil {
+		log.Fatalf("accounts: %v", err)
+	}
+
 	srv := &server{
 		cfg:      cfg,
 		secret:   []byte(cfg.Secret),
 		web:      webFS(),
+		users:    users,
 		attempts: map[string]*attempt{},
 	}
-	upstreamAuth := ""
 	if cfg.UpstreamAuth != "" {
-		upstreamAuth = "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.UpstreamAuth))
+		srv.upstreamAuth = "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.UpstreamAuth))
 	}
+	upstreamAuth := srv.upstreamAuth
 
 	srv.proxy = &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -171,6 +195,9 @@ func main() {
 	mux.HandleFunc("/api/logout", srv.handleLogout)
 	mux.HandleFunc("/api/session", srv.handleSession)
 	mux.HandleFunc("/api/quota", srv.requireAuth(srv.handleQuota))
+	mux.HandleFunc("/api/password", srv.handlePassword)
+	mux.HandleFunc("/api/users", srv.requireAdmin(srv.handleUsers))
+	mux.HandleFunc("/api/users/", srv.requireAdmin(srv.handleUser))
 	mux.HandleFunc("/api/fs/", srv.requireAuth(srv.handleFS))
 	mux.HandleFunc("/", srv.handleStatic)
 
@@ -183,7 +210,8 @@ func main() {
 		ReadHeaderTimeout: 20 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	log.Printf("depot-gw listening on %s, storage %s", cfg.Listen, cfg.Upstream)
+	log.Printf("depot-gw listening on %s, storage %s, accounts %s",
+		cfg.Listen, cfg.Upstream, cfg.UsersFile)
 	log.Fatal(httpSrv.ListenAndServe())
 }
 
@@ -250,47 +278,61 @@ func pbkdf2SHA256(password, salt []byte, iter, keyLen int) []byte {
 	return out[:keyLen]
 }
 
-func (s *server) sign(name string, exp int64) string {
-	payload := name + "." + strconv.FormatInt(exp, 10)
+func (s *server) sign(name string, ver int, exp int64) string {
+	payload := name + "." + strconv.Itoa(ver) + "." + strconv.FormatInt(exp, 10)
 	mac := hmac.New(sha256.New, s.secret)
 	mac.Write([]byte(payload))
 	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (s *server) verify(token string) (string, bool) {
+func (s *server) verify(token string) (*user, bool) {
 	i := strings.LastIndex(token, ".")
 	if i < 0 {
-		return "", false
+		return nil, false
 	}
 	payload, sig := token[:i], token[i+1:]
 	mac := hmac.New(sha256.New, s.secret)
 	mac.Write([]byte(payload))
 	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if subtle.ConstantTimeCompare([]byte(sig), []byte(want)) != 1 {
-		return "", false
+		return nil, false
 	}
-	j := strings.LastIndex(payload, ".")
-	if j < 0 {
-		return "", false
+	parts := strings.Split(payload, ".")
+	if len(parts) != 3 {
+		return nil, false
 	}
-	name, expStr := payload[:j], payload[j+1:]
-	exp, err := strconv.ParseInt(expStr, 10, 64)
+	exp, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", false
+		return nil, false
 	}
-	if s.findUser(name) == nil {
-		return "", false
+	ver, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return nil, false
 	}
-	return name, true
+	u := s.users.find(parts[0])
+	// A deleted account, or one whose password has moved on, cannot ride an old
+	// cookie back in.
+	if u == nil || u.Ver != ver {
+		return nil, false
+	}
+	return u, true
 }
 
-func (s *server) findUser(name string) *user {
-	for i := range s.cfg.Users {
-		if s.cfg.Users[i].Name == name {
-			return &s.cfg.Users[i]
-		}
-	}
-	return nil
+func (s *server) findUser(name string) *user { return s.users.find(name) }
+
+// setSession issues the cookie. Kept in one place so its flags cannot drift
+// between signing in and changing a password.
+func (s *server) setSession(w http.ResponseWriter, r *http.Request, u *user) {
+	exp := time.Now().Add(time.Duration(s.cfg.SessionTTL) * time.Hour)
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    s.sign(u.Name, u.Ver, exp.Unix()),
+		Path:     "/",
+		Expires:  exp,
+		HttpOnly: true,
+		Secure:   isHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func clientIP(r *http.Request) string {
@@ -380,17 +422,10 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.noteSuccess(ip)
-	exp := time.Now().Add(time.Duration(s.cfg.SessionTTL) * time.Hour)
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    s.sign(u.Name, exp.Unix()),
-		Path:     "/",
-		Expires:  exp,
-		HttpOnly: true,
-		Secure:   isHTTPS(r),
-		SameSite: http.SameSiteLaxMode,
+	s.setSession(w, r, u)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": u.Name, "admin": u.Admin, "root": u.Root,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "admin": u.Admin})
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -402,24 +437,23 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.currentUser(r)
+	u, ok := s.currentUser(r)
 	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"authenticated": false, "title": s.cfg.Title, "lang": s.cfg.Lang,
 		})
 		return
 	}
-	u := s.findUser(name)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true, "user": name, "admin": u.Admin,
+		"authenticated": true, "user": u.Name, "admin": u.Admin, "root": u.Root,
 		"title": s.cfg.Title, "lang": s.cfg.Lang,
 	})
 }
 
-func (s *server) currentUser(r *http.Request) (string, bool) {
+func (s *server) currentUser(r *http.Request) (*user, bool) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	return s.verify(c.Value)
 }
@@ -445,6 +479,23 @@ func isHTTPS(r *http.Request) bool {
 var allowedMethods = map[string]bool{
 	http.MethodGet: true, http.MethodHead: true, http.MethodPut: true,
 	http.MethodPatch: true, http.MethodDelete: true, "MKCOL": true, "MOVE": true,
+}
+
+// withinRoot reports whether a cleaned path stays inside the account's folder.
+// An account with no Root sees the whole drop.
+func withinRoot(u *user, clean string) bool {
+	if u == nil {
+		return false
+	}
+	if u.Root == "" {
+		return true
+	}
+	base := "/" + u.Root
+	trimmed := strings.TrimSuffix(clean, "/")
+	if trimmed == "" {
+		trimmed = "/"
+	}
+	return trimmed == base || strings.HasPrefix(trimmed, base+"/")
 }
 
 func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
@@ -474,6 +525,15 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(rest, "/") && clean != "/" {
 		clean += "/"
 	}
+
+	// A confined account is held to its folder here, on every single request.
+	// The browser is told where its root is, but it is never trusted about it:
+	// otherwise the confinement would come off by typing a URL by hand.
+	me, _ := s.currentUser(r) // requireAuth already vouched for the session
+	if !withinRoot(me, clean) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
+		return
+	}
 	r.URL.Path = clean
 
 	// MOVE carries a Destination pointing back at us; rewrite it into the
@@ -483,6 +543,11 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 			p := path.Clean(strings.TrimPrefix(u.Path, "/api/fs"))
 			if !strings.HasPrefix(p, "/") {
 				p = "/" + p
+			}
+			// A move is a write at the destination too, so it gets the same check.
+			if !withinRoot(me, p) {
+				writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
+				return
 			}
 			r.Header.Set("Destination", strings.TrimSuffix(s.cfg.Upstream, "/")+p)
 		}

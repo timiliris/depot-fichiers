@@ -16,6 +16,9 @@ uploads that survive a proxy which caps request size.
     <td><img src="docs/uploads.png" alt="Upload queue with progress, pause and resume"></td>
   </tr>
   <tr>
+    <td><img src="docs/accounts.png" alt="Account management"></td>
+  </tr>
+  <tr>
     <td><img src="docs/login.png" alt="Sign-in page"></td>
   </tr>
 </table>
@@ -64,6 +67,9 @@ never exposed.
 ## Features
 
 - Sign-in page, signed cookie session, sign-out
+- Accounts managed from the interface: create, delete, reset a password, promote
+- **One folder per account, or the whole drop** — chosen per account
+- Guests change their own password, so the owner is not the help desk
 - Drag and drop anywhere on the page, **whole folders included**
 - Chunked uploads, **resume after an interruption**, pause, cancel, retry
 - Per-file progress: percentage, rate, time left
@@ -124,15 +130,18 @@ DEPOT_BIND=127.0.0.1                 # publish address, left to the proxy
 | `DEPOT_UID` / `DEPOT_GID` | `1001` | account the files are written as |
 | `DEPOT_BIND` | `127.0.0.1` | published listen address, port 8099 |
 
-### 5. Accounts
+### 5. The first account
+
+Only the first one is created by hand; every account after it is managed from the
+interface.
 
 ```bash
 docker compose build
 docker run --rm depot-gw:1 -hash 'the-password'
 ```
 
-Put the resulting hash into `gateway/config.json`, and **replace the `secret`**
-with a random value:
+Put the resulting hash into `gateway/config.json` as an `admin: true` account, and
+**replace the `secret`** with a random value:
 
 ```bash
 openssl rand -base64 48
@@ -168,6 +177,39 @@ proxy_send_timeout 3600s;
 without it, a 20GB upload is written out in full on the disk of whatever machine
 hosts the proxy.
 
+## Accounts
+
+`users[]` in the config is a **seed**, not the live list. On first start it is
+copied into `users_file` — `/var/lib/depot-gw/users.json` by default, which
+`docker-compose.yml` maps to `gateway/state/` — and everything after that happens
+in the interface. Accounts are deliberately kept out of `config.json`: they are
+the only state this program rewrites, so a bug in that path cannot take the
+signing secret with it.
+
+> The accounts file **must** sit on a mount. Left inside the container it works
+> perfectly until the next `docker compose build`, which silently takes every
+> account created since with it.
+
+Each account carries a **folder**. Empty means the whole drop; set, the account is
+confined to that subfolder and neither sees nor writes anywhere else. Both kinds
+can coexist — the household member gets the whole drop, each guest gets a corner.
+
+The confinement is enforced in the gateway on **every request**, not by hiding
+buttons: reads, writes, deletes and moves are all checked, `..` included. The
+interface is told where its root is only so it does not offer a door that would
+be refused anyway. To check that on your own install:
+
+```bash
+BASE=http://127.0.0.1:8099 ADMIN=me ADMIN_PW=... ./scripts/test-accounts.sh
+```
+
+It creates `test-*` accounts and deletes them afterwards, so point it at a
+throwaway install rather than one in service.
+
+Changing a password invalidates every session that account had open, anywhere —
+each account carries a counter that rides inside the signed cookie. Deleting an
+account has the same effect immediately.
+
 ## Updating
 
 ```bash
@@ -192,7 +234,8 @@ on the storage side.
 | `secret` | cookie signing key, 32 characters minimum |
 | `title` | displayed name |
 | `lang` | `en` or `fr`; empty follows each browser |
-| `users[]` | `name`, `hash` (PBKDF2), `admin` |
+| `users_file` | where accounts live; must be on a mount |
+| `users[]` | seed only: `name`, `hash` (PBKDF2), `admin`, `root` |
 
 `gateway/config.json` holds a signing key and password hashes: it is in
 `.gitignore` and has no business in a Git repository.
@@ -215,7 +258,9 @@ dependency. The server answers with stable error codes (`bad_credentials`,
 - Constant response time between an unknown account and a wrong password
 - Progressive per-IP lockout after 5 failures: 1, 2, 4… up to 32 minutes
 - Every write requires an `X-Depot` header, which a cross-site form cannot set
-- Paths are normalised before they reach the storage
+- Paths are normalised before they reach the storage, and every request is
+  checked against the account's folder — including the destination of a move
+- A password change, or a deletion, drops that account's open sessions at once
 - No external dependency on either side: no CDN, no third-party module, so there
   is nothing to track beyond the standard library
 
