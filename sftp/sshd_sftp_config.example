@@ -1,0 +1,43 @@
+# Instance sshd dédiée au SFTP. NE PAS fusionner avec /etc/ssh/sshd_config.
+#
+# La raison est simple : le sshd du port 22 sert aussi la connexion
+# d'administration. Y ajouter des comptes SFTP obligerait à exposer ce port-là
+# pour donner un accès de dépôt, ce qui met la connexion root sur le chemin d'un
+# balayage automatique. Une seconde instance sur son propre port sépare les deux.
+
+Port 2223
+# Adresse d'écoute restreinte : ici l'interface par laquelle le relais arrive.
+ListenAddress 0.0.0.0
+PidFile /run/sshd-sftp.pid
+
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+LogLevel INFO
+SyslogFacility AUTH
+
+PermitRootLogin no
+AllowGroups sftpusers
+PasswordAuthentication yes
+PubkeyAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+MaxAuthTries 3
+MaxStartups 10:30:60
+LoginGraceTime 30
+
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+PermitTunnel no
+GatewayPorts no
+PermitUserRC no
+
+ClientAliveInterval 60
+ClientAliveCountMax 30
+
+Subsystem sftp internal-sftp -u 0002
+
+Match Group sftpusers
+    ChrootDirectory /srv/depot/%u
+    ForceCommand internal-sftp -u 0002

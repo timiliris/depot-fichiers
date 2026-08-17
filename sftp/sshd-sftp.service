@@ -1,0 +1,17 @@
+[Unit]
+Description=Instance OpenSSH dédiée au SFTP du dépôt
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/depot
+
+[Service]
+Type=notify
+ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_sftp_config
+ExecStart=/usr/sbin/sshd -D -f /etc/ssh/sshd_sftp_config
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

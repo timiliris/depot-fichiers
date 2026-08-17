@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fr">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Dépôt</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+</head>
+
+<body class="booting">
+
+  <!-- ─────────── connexion ─────────── -->
+  <main id="login" class="login">
+    <form class="login-card" id="loginForm" autocomplete="on">
+      <div class="login-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
+          <path d="M12 11.5v5M12 11.5l-2.2 2.2M12 11.5l2.2 2.2" stroke-linecap="round" />
+        </svg>
+      </div>
+      <h1 id="loginTitle">Dépôt</h1>
+      <p class="login-sub">Espace de dépôt privé</p>
+
+      <label class="field">
+        <span>Identifiant</span>
+        <input type="text" id="loginUser" name="username" autocomplete="username" required
+          autocapitalize="none" spellcheck="false">
+      </label>
+
+      <label class="field">
+        <span>Mot de passe</span>
+        <span class="pw-wrap">
+          <input type="password" id="loginPass" name="password" autocomplete="current-password" required>
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="Afficher le mot de passe">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        </span>
+      </label>
+
+      <p class="login-error" id="loginError" role="alert" hidden></p>
+
+      <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
+        <span class="btn-label">Se connecter</span>
+        <span class="spinner" aria-hidden="true"></span>
+      </button>
+    </form>
+  </main>
+
+  <!-- ─────────── application ─────────── -->
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="topbar-left">
+        <svg class="brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+          aria-hidden="true">
+          <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
+        </svg>
+        <nav class="breadcrumb" id="breadcrumb" aria-label="Chemin"></nav>
+      </div>
+
+      <div class="topbar-right">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4.5 4.5" stroke-linecap="round" />
+          </svg>
+          <input type="search" id="filter" placeholder="Filtrer…" aria-label="Filtrer les fichiers"
+            autocomplete="off" spellcheck="false">
+        </div>
+        <div class="user-menu">
+          <button class="btn btn-ghost btn-icon" id="userBtn" aria-label="Compte" aria-expanded="false">
+            <span class="avatar" id="avatar">–</span>
+          </button>
+          <div class="popover" id="userPop" hidden>
+            <p class="popover-head">Connecté en tant que <strong id="userName">–</strong></p>
+            <div class="quota" id="quotaBox">
+              <div class="quota-bar"><span id="quotaFill"></span></div>
+              <p class="quota-text" id="quotaText">…</p>
+            </div>
+            <button class="popover-item" id="logoutBtn">Se déconnecter</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <button class="btn btn-primary" id="pickFiles">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <path d="M12 19V5" stroke-linecap="round" />
+          <path d="m6 11 6-6 6 6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        Envoyer des fichiers
+      </button>
+      <button class="btn btn-ghost" id="pickFolder">Envoyer un dossier</button>
+      <button class="btn btn-ghost" id="newFolder">Nouveau dossier</button>
+
+      <span class="toolbar-gap"></span>
+
+      <div class="seg" role="group" aria-label="Affichage">
+        <button class="seg-btn is-on" id="viewList" aria-label="Liste">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button class="seg-btn" id="viewGrid" aria-label="Grille">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="4" y="4" width="7" height="7" rx="1.5" />
+            <rect x="13" y="4" width="7" height="7" rx="1.5" />
+            <rect x="4" y="13" width="7" height="7" rx="1.5" />
+            <rect x="13" y="13" width="7" height="7" rx="1.5" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <main class="content" id="content">
+      <div class="listing" id="listing"></div>
+
+      <div class="empty" id="empty" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
+          <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
+        </svg>
+        <p class="empty-title">Ce dossier est vide</p>
+        <p class="empty-sub">Glissez des fichiers n’importe où sur la page pour les envoyer.</p>
+      </div>
+
+      <div class="skeleton" id="skeleton"></div>
+    </main>
+
+    <!-- file d’envoi -->
+    <section class="uploads" id="uploads" hidden aria-live="polite">
+      <header class="uploads-head">
+        <button class="uploads-toggle" id="uploadsToggle" aria-expanded="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <h2 id="uploadsTitle">Envois</h2>
+        <span class="uploads-count" id="uploadsCount"></span>
+        <button class="btn btn-ghost btn-tiny" id="uploadsClear">Effacer</button>
+      </header>
+      <div class="uploads-body" id="uploadsBody"></div>
+      <div class="uploads-total"><span id="uploadsTotalFill"></span></div>
+    </section>
+
+    <!-- superposition de glisser-déposer -->
+    <div class="dropzone" id="dropzone" hidden>
+      <div class="dropzone-inner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+          <path d="M12 16V4" stroke-linecap="round" />
+          <path d="m7 9 5-5 5 5" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
+        </svg>
+        <p>Déposez pour envoyer</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- aperçu -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-bar">
+      <p class="modal-name" id="modalName"></p>
+      <a class="btn btn-ghost btn-tiny" id="modalDownload" download>Télécharger</a>
+      <button class="btn btn-ghost btn-icon btn-tiny" id="modalClose" aria-label="Fermer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-stage" id="modalStage"></div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <input type="file" id="fileInput" multiple hidden>
+  <input type="file" id="folderInput" webkitdirectory multiple hidden>
+
+  <script src="app.js"></script>
+</body>
+
+</html>

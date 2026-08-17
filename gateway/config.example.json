@@ -1,0 +1,17 @@
+{
+  "listen": ":5100",
+  "upstream": "http://depot-stockage:5000",
+  "upstream_auth": "stockage:CHANGEZ-MOI",
+  "quota_path": "/data",
+  "session_ttl_hours": 720,
+  "title": "Dépôt",
+
+  "_secret": "openssl rand -base64 48",
+  "secret": "REMPLACEZ-PAR-48-CARACTERES-ALEATOIRES-AU-MOINS-32",
+
+  "_users": "empreinte obtenue avec: depot-gw -hash 'le-mot-de-passe'",
+  "users": [
+    { "name": "moi", "hash": "pbkdf2-sha256$210000$SEL$EMPREINTE", "admin": true },
+    { "name": "invite", "hash": "pbkdf2-sha256$210000$SEL$EMPREINTE" }
+  ]
+}

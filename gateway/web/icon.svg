@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    /* Un favicon ne reçoit pas currentColor : on suit le thème du navigateur. */
+    :root { --fg: #4da3ff; --bg: #14181e; }
+    @media (prefers-color-scheme: light) { :root { --fg: #0b6dd4; --bg: #ffffff; } }
+  </style>
+  <rect width="32" height="32" rx="7" fill="var(--bg)" />
+  <g fill="none" stroke="var(--fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 11.5A2 2 0 0 1 8 9.5h4l2 2.5h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-11.5Z" />
+    <path d="M16 16v6M16 16l-2.6 2.6M16 16l2.6 2.6" />
+  </g>
+</svg>

@@ -1,0 +1,45 @@
+# Deux étages, et c'est volontaire :
+#   depot-stockage : dufs, stockage seul, joignable uniquement sur le réseau
+#                    interne du stack.
+#   depot-web      : la passerelle. Seule chose publiée, seule chose qui parle au
+#                    navigateur, donc seule chose qui décide de
+#                    l'authentification. C'est ce qui permet une vraie page de
+#                    connexion au lieu de la fenêtre imposée par HTTP Basic.
+#
+# DEPOT_DATA doit désigner le même dossier que celui du compte SFTP : les deux
+# voies aboutissent aux mêmes fichiers.
+
+services:
+  depot-stockage:
+    image: sigoden/dufs:v0.46.0
+    container_name: depot-stockage
+    restart: unless-stopped
+    user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
+    command: ["-c", "/config.yaml"]
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      - ${DEPOT_DATA:-/srv/depot/upload}:/data
+    expose:
+      - "5000"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  depot-web:
+    build: ./gateway
+    image: depot-gw:1
+    container_name: depot-web
+    restart: unless-stopped
+    user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
+    depends_on:
+      - depot-stockage
+    volumes:
+      - ./gateway/config.json:/etc/depot-gw/config.json:ro
+      # en lecture seule, uniquement pour lire le remplissage du volume
+      - ${DEPOT_DATA:-/srv/depot/upload}:/data:ro
+    ports:
+      # 127.0.0.1 par défaut : c'est au proxy inverse d'exposer le service
+      - "${DEPOT_BIND:-127.0.0.1}:8099:5100"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

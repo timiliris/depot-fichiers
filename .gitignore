@@ -1,0 +1,12 @@
+# Contient la clé de signature du cookie et les empreintes de mots de passe.
+gateway/config.json
+config.yaml
+
+# Configurations dérivées des gabarits, propres à une machine
+sftp/sshd_sftp_config
+docker-compose.override.yml
+.env
+
+# Binaires
+depot-gw
+*.img

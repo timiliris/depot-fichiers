@@ -1,0 +1,20 @@
+# Configuration de dufs (le service de stockage).
+# Il n'est pas publié : seule la passerelle le joint, par le réseau du stack.
+serve-path: /data
+bind: 0.0.0.0
+port: 5000
+
+allow-upload: true
+allow-archive: true
+allow-search: true
+
+# allow-delete n'est pas un confort : sans lui, un envoi interrompu laisse un
+# fichier partiel qu'aucune requête ne peut réécrire, et ce nom de fichier est
+# bloqué définitivement. C'est aussi ce droit qui autorise la reprise.
+allow-delete: true
+
+# Conservé comme défense en profondeur même sur un réseau interne. La passerelle
+# pose l'en-tête correspondante via `upstream_auth`; le navigateur ne la voit
+# jamais et n'aura donc jamais la fenêtre du navigateur.
+auth:
+  - "stockage:CHANGEZ-MOI@/:rw"
