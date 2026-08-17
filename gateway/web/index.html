@@ -1,19 +1,21 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <meta name="robots" content="noindex, nofollow">
-  <title>Dépôt</title>
+  <title>Drop</title>
   <link rel="stylesheet" href="app.css">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
+<!-- Every user-visible string carries a data-i18n* attribute; app.js fills them
+     in from its dictionary once the language is known. -->
 
 <body class="booting">
 
-  <!-- ─────────── connexion ─────────── -->
+  <!-- ─────────── sign in ─────────── -->
   <main id="login" class="login">
     <form class="login-card" id="loginForm" autocomplete="on">
       <div class="login-mark" aria-hidden="true">
@@ -22,20 +24,20 @@
           <path d="M12 11.5v5M12 11.5l-2.2 2.2M12 11.5l2.2 2.2" stroke-linecap="round" />
         </svg>
       </div>
-      <h1 id="loginTitle">Dépôt</h1>
-      <p class="login-sub">Espace de dépôt privé</p>
+      <h1 id="loginTitle">Drop</h1>
+      <p class="login-sub" data-i18n="login_sub">Private file drop</p>
 
       <label class="field">
-        <span>Identifiant</span>
+        <span data-i18n="field_user">Username</span>
         <input type="text" id="loginUser" name="username" autocomplete="username" required
           autocapitalize="none" spellcheck="false">
       </label>
 
       <label class="field">
-        <span>Mot de passe</span>
+        <span data-i18n="field_password">Password</span>
         <span class="pw-wrap">
           <input type="password" id="loginPass" name="password" autocomplete="current-password" required>
-          <button type="button" class="pw-toggle" id="pwToggle" aria-label="Afficher le mot de passe">
+          <button type="button" class="pw-toggle" id="pwToggle" data-i18n-aria="pw_show">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
               <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
               <circle cx="12" cy="12" r="3" />
@@ -47,7 +49,7 @@
       <p class="login-error" id="loginError" role="alert" hidden></p>
 
       <button type="submit" class="btn btn-primary btn-block" id="loginBtn">
-        <span class="btn-label">Se connecter</span>
+        <span class="btn-label" data-i18n="sign_in">Sign in</span>
         <span class="spinner" aria-hidden="true"></span>
       </button>
     </form>
@@ -61,7 +63,7 @@
           aria-hidden="true">
           <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
         </svg>
-        <nav class="breadcrumb" id="breadcrumb" aria-label="Chemin"></nav>
+        <nav class="breadcrumb" id="breadcrumb" data-i18n-aria="breadcrumb"></nav>
       </div>
 
       <div class="topbar-right">
@@ -70,20 +72,20 @@
             <circle cx="11" cy="11" r="6.5" />
             <path d="m16 16 4.5 4.5" stroke-linecap="round" />
           </svg>
-          <input type="search" id="filter" placeholder="Filtrer…" aria-label="Filtrer les fichiers"
+          <input type="search" id="filter" data-i18n-placeholder="filter" data-i18n-aria="filter"
             autocomplete="off" spellcheck="false">
         </div>
         <div class="user-menu">
-          <button class="btn btn-ghost btn-icon" id="userBtn" aria-label="Compte" aria-expanded="false">
+          <button class="btn btn-ghost btn-icon" id="userBtn" data-i18n-aria="account" aria-expanded="false">
             <span class="avatar" id="avatar">–</span>
           </button>
           <div class="popover" id="userPop" hidden>
-            <p class="popover-head">Connecté en tant que <strong id="userName">–</strong></p>
+            <p class="popover-head" id="signedInAs"></p>
             <div class="quota" id="quotaBox">
               <div class="quota-bar"><span id="quotaFill"></span></div>
               <p class="quota-text" id="quotaText">…</p>
             </div>
-            <button class="popover-item" id="logoutBtn">Se déconnecter</button>
+            <button class="popover-item" id="logoutBtn" data-i18n="sign_out">Sign out</button>
           </div>
         </div>
       </div>
@@ -95,20 +97,20 @@
           <path d="M12 19V5" stroke-linecap="round" />
           <path d="m6 11 6-6 6 6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        Envoyer des fichiers
+        <span data-i18n="send_files">Upload files</span>
       </button>
-      <button class="btn btn-ghost" id="pickFolder">Envoyer un dossier</button>
-      <button class="btn btn-ghost" id="newFolder">Nouveau dossier</button>
+      <button class="btn btn-ghost" id="pickFolder" data-i18n="send_folder">Upload a folder</button>
+      <button class="btn btn-ghost" id="newFolder" data-i18n="new_folder">New folder</button>
 
       <span class="toolbar-gap"></span>
 
-      <div class="seg" role="group" aria-label="Affichage">
-        <button class="seg-btn is-on" id="viewList" aria-label="Liste">
+      <div class="seg" role="group" data-i18n-aria="view">
+        <button class="seg-btn is-on" id="viewList" data-i18n-aria="view_list">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M4 7h16M4 12h16M4 17h16" stroke-linecap="round" />
           </svg>
         </button>
-        <button class="seg-btn" id="viewGrid" aria-label="Grille">
+        <button class="seg-btn" id="viewGrid" data-i18n-aria="view_grid">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
             <rect x="4" y="4" width="7" height="7" rx="1.5" />
             <rect x="13" y="4" width="7" height="7" rx="1.5" />
@@ -126,14 +128,14 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
           <path d="M3 7.5A2 2 0 0 1 5 5.5h4l2 2.5h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-11Z" />
         </svg>
-        <p class="empty-title">Ce dossier est vide</p>
-        <p class="empty-sub">Glissez des fichiers n’importe où sur la page pour les envoyer.</p>
+        <p class="empty-title" data-i18n="empty_title">This folder is empty</p>
+        <p class="empty-sub" data-i18n="empty_sub">Drop files anywhere on the page to upload them.</p>
       </div>
 
       <div class="skeleton" id="skeleton"></div>
     </main>
 
-    <!-- file d’envoi -->
+    <!-- upload queue -->
     <section class="uploads" id="uploads" hidden aria-live="polite">
       <header class="uploads-head">
         <button class="uploads-toggle" id="uploadsToggle" aria-expanded="true">
@@ -141,15 +143,15 @@
             <path d="m6 9 6 6 6-6" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <h2 id="uploadsTitle">Envois</h2>
+        <h2 data-i18n="uploads">Uploads</h2>
         <span class="uploads-count" id="uploadsCount"></span>
-        <button class="btn btn-ghost btn-tiny" id="uploadsClear">Effacer</button>
+        <button class="btn btn-ghost btn-tiny" id="uploadsClear" data-i18n="clear">Clear</button>
       </header>
       <div class="uploads-body" id="uploadsBody"></div>
       <div class="uploads-total"><span id="uploadsTotalFill"></span></div>
     </section>
 
-    <!-- superposition de glisser-déposer -->
+    <!-- full-page drop target -->
     <div class="dropzone" id="dropzone" hidden>
       <div class="dropzone-inner">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
@@ -157,17 +159,17 @@
           <path d="m7 9 5-5 5 5" stroke-linecap="round" stroke-linejoin="round" />
           <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke-linecap="round" />
         </svg>
-        <p>Déposez pour envoyer</p>
+        <p data-i18n="drop_here">Drop to upload</p>
       </div>
     </div>
   </div>
 
-  <!-- aperçu -->
+  <!-- preview -->
   <div class="modal" id="modal" hidden>
     <div class="modal-bar">
       <p class="modal-name" id="modalName"></p>
-      <a class="btn btn-ghost btn-tiny" id="modalDownload" download>Télécharger</a>
-      <button class="btn btn-ghost btn-icon btn-tiny" id="modalClose" aria-label="Fermer">
+      <a class="btn btn-ghost btn-tiny" id="modalDownload" download data-i18n="download">Download</a>
+      <button class="btn btn-ghost btn-icon btn-tiny" id="modalClose" data-i18n-aria="close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" />
         </svg>

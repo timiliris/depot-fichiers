@@ -1,5 +1,5 @@
 [Unit]
-Description=Instance OpenSSH dédiée au SFTP du dépôt
+Description=Dedicated OpenSSH instance for the file drop's SFTP
 After=network-online.target
 Wants=network-online.target
 RequiresMountsFor=/srv/depot

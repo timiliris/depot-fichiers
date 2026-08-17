@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <style>
-    /* Un favicon ne reçoit pas currentColor : on suit le thème du navigateur. */
+    /* A favicon gets no currentColor, so follow the browser theme instead. */
     :root { --fg: #4da3ff; --bg: #14181e; }
     @media (prefers-color-scheme: light) { :root { --fg: #0b6dd4; --bg: #ffffff; } }
   </style>

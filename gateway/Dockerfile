@@ -1,5 +1,5 @@
-# Aucune dépendance externe: rien à télécharger, le build est reproductible
-# et fonctionne même si le réseau du module proxy est indisponible.
+# No external dependencies: nothing to download, so the build is reproducible
+# and works even when the module proxy is unreachable.
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod ./

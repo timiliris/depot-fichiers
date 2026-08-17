@@ -1,51 +1,51 @@
-# Accès SFTP
+# SFTP access
 
-Le SFTP et la page web servent **le même dossier**. Un fichier déposé par l'un
-est immédiatement visible par l'autre, avec son vrai nom.
+SFTP and the web page serve **the same folder**. A file dropped through one is
+immediately visible through the other, under its real name.
 
-Le SFTP reste utile même avec une interface web : c'est la voie qui n'a aucune
-limite de taille de requête, qui supporte le mieux une ligne capricieuse, et qui
-permet un `rsync` depuis la machine qui héberge.
+SFTP stays useful even with a web interface: it is the route with no request-size
+limit at all, it copes best with a flaky line, and it lets you `rsync` from the
+host itself.
 
-## Pourquoi une seconde instance sshd
+## Why a second sshd instance
 
-Le sshd du port 22 sert aussi l'administration de la machine. Ajouter des comptes
-de dépôt à sa configuration obligerait à exposer ce port pour donner un accès
-SFTP — donc à mettre la connexion root sur le chemin des balayages automatiques.
-Une instance séparée, avec sa configuration et son port, garde les deux mondes
-distincts. Le sshd du système n'est pas modifié d'une ligne.
+The sshd on port 22 also serves administrative access to the machine. Adding drop
+accounts to its configuration would mean exposing that port to hand out SFTP —
+putting the root login in the path of automated scanning. A separate instance,
+with its own configuration and port, keeps the two worlds apart. The system's
+sshd is not touched at all.
 
-## Mise en place
+## Setup
 
 ```bash
-# 1. Groupe et compte, sans shell
+# 1. Group and account, no shell
 groupadd sftpusers
-useradd -M -d /upload -s /usr/sbin/nologin -g sftpusers invite
+useradd -M -d /upload -s /usr/sbin/nologin -g sftpusers guest
 
-# 2. Arborescence de la prison : la racine DOIT être root:root et non inscriptible,
-#    sinon sshd refuse le chroot
-install -d -o root -g root -m 755 /srv/depot/invite
-install -d -o invite -g sftpusers -m 775 /srv/depot/invite/upload
+# 2. Jail layout: the root MUST be root:root and not writable by anyone else,
+#    or sshd refuses the chroot
+install -d -o root -g root -m 755 /srv/depot/guest
+install -d -o guest -g sftpusers -m 775 /srv/depot/guest/upload
 
-# 3. Configuration et service
+# 3. Configuration and service
 cp sftp/sshd_sftp_config.example /etc/ssh/sshd_sftp_config
 chmod 600 /etc/ssh/sshd_sftp_config
-sshd -t -f /etc/ssh/sshd_sftp_config          # à vérifier AVANT de démarrer
+sshd -t -f /etc/ssh/sshd_sftp_config          # check BEFORE starting
 cp sftp/sshd-sftp.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now sshd-sftp.service
 ```
 
-`ChrootDirectory` place l'utilisateur dans `/srv/depot/<compte>`, et son dossier
-d'accueil `/upload` est le seul endroit où il peut écrire. Le dossier servi par la
-page web doit être ce même `/srv/depot/<compte>/upload`.
+`ChrootDirectory` puts the user in `/srv/depot/<account>`, and their home
+`/upload` is the only place they can write. The folder served by the web page must
+be that same `/srv/depot/<account>/upload`.
 
-## Pièges
+## Pitfalls
 
-- **La racine du chroot doit appartenir à root et n'être inscriptible que par
-  lui.** C'est une exigence d'OpenSSH ; sinon la connexion échoue sans message
-  clair côté client.
-- **Vérifier la configuration avec `sshd -t` avant de démarrer**, et garder une
-  session ouverte le temps de valider.
-- Le conteneur du service web doit tourner avec l'`uid` du compte SFTP, sinon les
-  fichiers déposés par une voie ne sont pas gérables par l'autre.
+- **The chroot root must be owned by root and writable by root only.** OpenSSH
+  requires it; otherwise the connection fails with no clear message on the client
+  side.
+- **Check the configuration with `sshd -t` before starting**, and keep a session
+  open while you validate.
+- The web container must run with the SFTP account's `uid`, or files dropped
+  through one route cannot be managed through the other.

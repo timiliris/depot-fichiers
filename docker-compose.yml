@@ -1,16 +1,16 @@
-# Deux étages, et c'est volontaire :
-#   depot-stockage : dufs, stockage seul, joignable uniquement sur le réseau
-#                    interne du stack.
-#   depot-web      : la passerelle. Seule chose publiée, seule chose qui parle au
-#                    navigateur, donc seule chose qui décide de
-#                    l'authentification. C'est ce qui permet une vraie page de
-#                    connexion au lieu de la fenêtre imposée par HTTP Basic.
+# Two tiers, deliberately:
+#   depot-storage : dufs, storage only, reachable on the stack's internal
+#                   network and nowhere else.
+#   depot-web     : the gateway. The only thing published, the only thing the
+#                   browser talks to, and therefore the only thing that decides
+#                   authentication. That is what allows a real sign-in page
+#                   instead of the dialog HTTP Basic forces.
 #
-# DEPOT_DATA doit désigner le même dossier que celui du compte SFTP : les deux
-# voies aboutissent aux mêmes fichiers.
+# DEPOT_DATA must point at the same folder as the SFTP account: both routes end
+# up on the same files.
 
 services:
-  depot-stockage:
+  depot-storage:
     image: sigoden/dufs:v0.46.0
     restart: unless-stopped
     user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
@@ -30,13 +30,13 @@ services:
     restart: unless-stopped
     user: "${DEPOT_UID:-1001}:${DEPOT_GID:-1001}"
     depends_on:
-      - depot-stockage
+      - depot-storage
     volumes:
       - ./gateway/config.json:/etc/depot-gw/config.json:ro
-      # en lecture seule, uniquement pour lire le remplissage du volume
+      # read-only, only to report how full the volume is
       - ${DEPOT_DATA:-/srv/depot/upload}:/data:ro
     ports:
-      # 127.0.0.1 par défaut : c'est au proxy inverse d'exposer le service
+      # 127.0.0.1 by default: publishing is the reverse proxy's job
       - "${DEPOT_BIND:-127.0.0.1}:8099:5100"
     logging:
       driver: json-file

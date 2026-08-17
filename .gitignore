@@ -1,12 +1,12 @@
-# Contient la clé de signature du cookie et les empreintes de mots de passe.
+# Holds the cookie signing key and the password hashes.
 gateway/config.json
 config.yaml
 
-# Configurations dérivées des gabarits, propres à une machine
+# Host-specific files derived from the templates
 sftp/sshd_sftp_config
 docker-compose.override.yml
 .env
 
-# Binaires
+# Binaries
 depot-gw
 *.img

@@ -1,12 +1,12 @@
-# Instance sshd dédiée au SFTP. NE PAS fusionner avec /etc/ssh/sshd_config.
+# sshd instance dedicated to SFTP. DO NOT merge into /etc/ssh/sshd_config.
 #
-# La raison est simple : le sshd du port 22 sert aussi la connexion
-# d'administration. Y ajouter des comptes SFTP obligerait à exposer ce port-là
-# pour donner un accès de dépôt, ce qui met la connexion root sur le chemin d'un
-# balayage automatique. Une seconde instance sur son propre port sépare les deux.
+# The reason is simple: the sshd on port 22 also serves administrative logins.
+# Adding SFTP accounts to it would mean exposing that port to hand out a drop
+# account, which puts the root login in the path of automated scanning. A second
+# instance on its own port keeps the two apart.
 
 Port 2223
-# Adresse d'écoute restreinte : ici l'interface par laquelle le relais arrive.
+# Restricted listen address: here, the interface the relay arrives on.
 ListenAddress 0.0.0.0
 PidFile /run/sshd-sftp.pid
 

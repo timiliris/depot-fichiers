@@ -1,16 +1,16 @@
-// depot-gw place une authentification devant un serveur de fichiers dufs.
+// depot-gw puts authentication in front of a dufs file server.
 //
-// dufs ne sait faire que du HTTP Basic, ce qui impose la fenêtre d'identifiants
-// du navigateur et interdit toute vraie page de connexion. Ce programme prend
-// donc la session à sa charge : il sert l'interface, vérifie un formulaire
-// contre des empreintes PBKDF2, délivre un cookie signé, et relaie chaque appel
-// de stockage vers dufs sur un réseau interne. dufs n'a aucun compte à lui et
-// n'est jamais publié, donc le cookie est la seule entrée — ce qui fait aussi
-// que les téléchargements et la lecture vidéo s'authentifient tout seuls, ce
-// qu'un en-tête ne peut pas faire depuis un simple <a> ou <video>.
+// dufs only speaks HTTP Basic, which forces the browser's own credential
+// dialog and leaves no room for a real sign-in page. This process owns the
+// session instead: it serves the interface, checks a form login against
+// PBKDF2 hashes, hands out a signed cookie, and relays every storage call to
+// dufs over an internal network. dufs has no accounts of its own and is never
+// published, so the cookie is the only way in — which also means downloads
+// and video streaming authenticate themselves, something a header cannot do
+// from a plain <a> or <video>.
 //
-// Aucun module externe : tout est en bibliothèque standard, donc l'image se
-// construit sans rien télécharger.
+// No external modules: everything is standard library, so the image builds
+// without fetching anything.
 package main
 
 import (
@@ -47,16 +47,18 @@ type user struct {
 type config struct {
 	Listen   string `json:"listen"`
 	Upstream string `json:"upstream"`
-	// UpstreamAuth vaut « utilisateur:motdepasse » quand dufs garde ses propres
-	// comptes. À laisser vide quand dufs tourne ouvert sur un réseau privé ;
-	// dans les deux cas le navigateur ne voit jamais de WWW-Authenticate, ce
-	// qui est tout l'objet de ce programme.
+	// UpstreamAuth is "user:password" when dufs keeps accounts of its own. Leave
+	// it empty when dufs runs open on a private network; either way the browser
+	// never sees a WWW-Authenticate, which is this program's whole point.
 	UpstreamAuth string `json:"upstream_auth"`
 	QuotaPath    string `json:"quota_path"`
 	SessionTTL   int    `json:"session_ttl_hours"`
 	Secret       string `json:"secret"`
 	Title        string `json:"title"`
-	Users        []user `json:"users"`
+	// Lang pins the interface language ("en" or "fr"). Empty lets each browser
+	// pick from its own Accept-Language.
+	Lang  string `json:"lang"`
+	Users []user `json:"users"`
 }
 
 type server struct {
@@ -66,7 +68,7 @@ type server struct {
 	web    fs.FS
 
 	mu       sync.Mutex
-	attempts map[string]*attempt // freinage des connexions, par IP cliente
+	attempts map[string]*attempt // login throttle, keyed by client IP
 }
 
 type attempt struct {
@@ -75,8 +77,8 @@ type attempt struct {
 }
 
 func main() {
-	hashPw := flag.String("hash", "", "affiche l'empreinte PBKDF2 de ce mot de passe et quitte")
-	cfgPath := flag.String("config", "/etc/depot-gw/config.json", "chemin du fichier de configuration")
+	hashPw := flag.String("hash", "", "print the PBKDF2 hash of this password and exit")
+	cfgPath := flag.String("config", "/etc/depot-gw/config.json", "path to the configuration file")
 	flag.Parse()
 
 	if *hashPw != "" {
@@ -86,11 +88,11 @@ func main() {
 
 	raw, err := os.ReadFile(*cfgPath)
 	if err != nil {
-		log.Fatalf("lecture de la config : %v", err)
+		log.Fatalf("read config: %v", err)
 	}
 	var cfg config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		log.Fatalf("config illisible : %v", err)
+		log.Fatalf("parse config: %v", err)
 	}
 	if cfg.Listen == "" {
 		cfg.Listen = ":5100"
@@ -99,24 +101,24 @@ func main() {
 		cfg.SessionTTL = 24 * 30
 	}
 	if cfg.Title == "" {
-		cfg.Title = "Dépôt"
+		cfg.Title = "Drop"
 	}
 	if len(cfg.Secret) < 32 {
-		log.Fatal("config : « secret » doit faire au moins 32 caractères")
+		log.Fatal("config: secret must be at least 32 characters")
 	}
-	// Le secret du gabarit est publié dans le dépôt : quiconque l'oublie laisse
-	// n'importe qui forger un cookie de session valide. Il fait la bonne
-	// longueur, donc le contrôle ci-dessus ne l'attrape pas.
-	if strings.Contains(cfg.Secret, "REMPLACEZ") {
-		log.Fatal("config : le « secret » du gabarit doit être remplacé — openssl rand -base64 48")
+	// The example secret ships in this repository: anyone who forgets it lets
+	// anybody forge a valid session cookie. It is long enough, so the check
+	// above does not catch it.
+	if strings.Contains(cfg.Secret, "REPLACE") {
+		log.Fatal("config: replace the example secret — openssl rand -base64 48")
 	}
 	if len(cfg.Users) == 0 {
-		log.Fatal("config : aucun compte défini")
+		log.Fatal("config: no users defined")
 	}
 
 	up, err := url.Parse(cfg.Upstream)
 	if err != nil {
-		log.Fatalf("URL amont invalide : %v", err)
+		log.Fatalf("parse upstream: %v", err)
 	}
 
 	srv := &server{
@@ -134,21 +136,21 @@ func main() {
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(up)
 			r.Out.Host = up.Host
-			// Notre cookie ne veut rien dire en amont, et le client n'a jamais
-			// à choisir l'identité utilisée côté stockage.
+			// Our cookie means nothing upstream, and the client never gets to
+			// pick the identity used against the storage.
 			r.Out.Header.Del("Cookie")
 			r.Out.Header.Del("Authorization")
 			if upstreamAuth != "" {
 				r.Out.Header.Set("Authorization", upstreamAuth)
 			}
 		},
-		// Vidage fréquent : quand le navigateur se déplace dans une vidéo, la
-		// réponse arrive au fil de l'eau au lieu d'un bloc à la fin.
+		// Frequent flushing: when the browser seeks inside a video the response
+		// streams out instead of landing in one lump at the end.
 		FlushInterval: 200 * time.Millisecond,
 		ModifyResponse: func(resp *http.Response) error {
-			// dufs redirige un dossier écrit sans slash final. Ce Location est
-			// exprimé dans l'espace de l'amont : le laisser tel quel enverrait
-			// le navigateur hors de /api/fs.
+			// dufs redirects a directory written without its trailing slash. That
+			// Location is expressed in the upstream's own space, so passing it
+			// through unchanged would send the browser outside /api/fs.
 			if loc := resp.Header.Get("Location"); loc != "" {
 				if u, err := url.Parse(loc); err == nil && !strings.HasPrefix(u.Path, "/api/fs") {
 					u.Scheme, u.Host = "", ""
@@ -160,7 +162,7 @@ func main() {
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("proxy %s %s: %v", r.Method, r.URL.Path, err)
-			http.Error(w, "stockage injoignable", http.StatusBadGateway)
+			http.Error(w, "storage unreachable", http.StatusBadGateway)
 		},
 	}
 
@@ -172,16 +174,16 @@ func main() {
 	mux.HandleFunc("/api/fs/", srv.requireAuth(srv.handleFS))
 	mux.HandleFunc("/", srv.handleStatic)
 
-	// Ni délai de lecture ni délai d'écriture : une seule tranche d'envoi peut
-	// légitimement prendre plusieurs minutes sur une ligne lente, et une
-	// connexion bloquée est déjà coupée plus haut par le proxy.
+	// No read or write timeout: a single upload slice can legitimately take
+	// minutes on a slow line, and a stalled connection is already cut further
+	// up by the reverse proxy.
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           logRequests(mux),
 		ReadHeaderTimeout: 20 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	log.Printf("depot-gw écoute sur %s, stockage %s", cfg.Listen, cfg.Upstream)
+	log.Printf("depot-gw listening on %s, storage %s", cfg.Listen, cfg.Upstream)
 	log.Fatal(httpSrv.ListenAndServe())
 }
 
@@ -304,9 +306,9 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-// throttle réduit un chercheur de mot de passe au pas. Le service est exposé
-// sur Internet, et le port SFTP voisin montre déjà à quoi ressemble un balayage
-// automatique laissé sans surveillance.
+// throttle slows a password guesser to a crawl. The service is exposed on the
+// internet, and the neighbouring SFTP port already shows what unattended
+// scanning looks like.
 func (s *server) throttle(ip string) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -324,14 +326,14 @@ func (s *server) noteFailure(ip string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a := s.attempts[ip]
-	// Une fois le blocage purgé, on repart de zéro.
+	// Once a lockout has run its course, start counting from scratch.
 	if a == nil || (a.count >= 5 && time.Now().After(a.until)) {
 		a = &attempt{}
 		s.attempts[ip] = a
 	}
 	a.count++
 	if a.count >= 5 {
-		// 5 essais ratés coûtent une minute, puis deux, puis quatre, plafond à 32.
+		// 5 wrong tries buy a minute, then two, then four, capped at 32.
 		back := time.Duration(1<<min(a.count-5, 5)) * time.Minute
 		a.until = time.Now().Add(back)
 	}
@@ -345,14 +347,14 @@ func (s *server) noteSuccess(ip string) {
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	ip := clientIP(r)
 	if wait := s.throttle(ip); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{
-			"error": fmt.Sprintf("trop de tentatives, réessayez dans %d s", int(wait.Seconds())+1),
+			"error": "throttled", "retry_after": int(wait.Seconds()) + 1,
 		})
 		return
 	}
@@ -361,12 +363,12 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
-		http.Error(w, "requête illisible", http.StatusBadRequest)
+		http.Error(w, "unreadable request", http.StatusBadRequest)
 		return
 	}
 	u := s.findUser(body.User)
-	// On calcule l'empreinte même pour un compte inconnu : un identifiant
-	// absent et un mot de passe faux mettent alors le même temps à répondre.
+	// Hash even for an unknown account, so a missing username and a wrong
+	// password take the same time to answer.
 	ref := "pbkdf2-sha256$210000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	encoded := ref
 	if u != nil {
@@ -374,7 +376,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !checkPassword(body.Password, encoded) || u == nil {
 		s.noteFailure(ip)
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "identifiants incorrects"})
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad_credentials"})
 		return
 	}
 	s.noteSuccess(ip)
@@ -402,12 +404,15 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	name, ok := s.currentUser(r)
 	if !ok {
-		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false, "title": s.cfg.Title})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"authenticated": false, "title": s.cfg.Title, "lang": s.cfg.Lang,
+		})
 		return
 	}
 	u := s.findUser(name)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"authenticated": true, "user": name, "admin": u.Admin, "title": s.cfg.Title,
+		"authenticated": true, "user": name, "admin": u.Admin,
+		"title": s.cfg.Title, "lang": s.cfg.Lang,
 	})
 }
 
@@ -422,7 +427,7 @@ func (s *server) currentUser(r *http.Request) (string, bool) {
 func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.currentUser(r); !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "session expirée"})
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "session_expired"})
 			return
 		}
 		next(w, r)
@@ -444,15 +449,15 @@ var allowedMethods = map[string]bool{
 
 func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	if !allowedMethods[r.Method] {
-		http.Error(w, "méthode non autorisée", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Toute modification doit venir de notre propre code. Un formulaire d'un
-	// autre site ne peut pas poser d'en-tête sur mesure, et SameSite=Lax bloque
-	// déjà le cookie sur un POST venu d'ailleurs.
+	// Anything that changes the tree must come from our own code. A cross-site
+	// form cannot set a custom header, and SameSite=Lax already withholds the
+	// cookie on a cross-site POST.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		if r.Header.Get("X-Depot") == "" {
-			http.Error(w, "en-tête X-Depot manquant", http.StatusForbidden)
+			http.Error(w, "missing X-Depot header", http.StatusForbidden)
 			return
 		}
 	}
@@ -461,7 +466,7 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	if rest == "" {
 		rest = "/"
 	}
-	// path.Clean réduit les « .. » avant que dufs ne les voie.
+	// path.Clean collapses any ".." before dufs ever sees it.
 	clean := path.Clean(rest)
 	if !strings.HasPrefix(clean, "/") {
 		clean = "/" + clean
@@ -471,8 +476,8 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	}
 	r.URL.Path = clean
 
-	// MOVE transporte un Destination qui pointe vers nous ; il faut le réécrire
-	// dans l'espace de l'amont, sinon dufs le rejette comme hôte étranger.
+	// MOVE carries a Destination pointing back at us; rewrite it into the
+	// upstream's space or dufs rejects it as a foreign host.
 	if dest := r.Header.Get("Destination"); dest != "" {
 		if u, err := url.Parse(dest); err == nil {
 			p := path.Clean(strings.TrimPrefix(u.Path, "/api/fs"))
@@ -511,8 +516,8 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := fs.ReadFile(s.web, name)
 	if err != nil {
-		// Un chemin inconnu retombe sur la coquille : un sous-dossier mis en
-		// favori ouvre l'application au lieu d'un 404.
+		// An unknown path falls back to the shell, so a bookmarked subfolder
+		// opens the app instead of a 404.
 		name = "index.html"
 		if body, err = fs.ReadFile(s.web, name); err != nil {
 			http.NotFound(w, r)
@@ -548,7 +553,7 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		next.ServeHTTP(sw, r)
-		// Les tranches d'envoi sont le cas bavard : on les garde, sur une ligne.
+		// Upload slices are the chatty case; keep them, on one short line.
 		log.Printf("%s %s %s %d %s", clientIP(r), r.Method, r.URL.RequestURI(),
 			sw.code, time.Since(start).Round(time.Millisecond))
 	})
@@ -572,6 +577,6 @@ func (w *statusWriter) Flush() {
 
 func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 
-// buildTime est figé pour que ServeContent annonce un Last-Modified stable sur
-// les fichiers embarqués : ils ne changent qu'avec le binaire.
+// buildTime is fixed so ServeContent hands out a stable Last-Modified for the
+// embedded assets; they only change when the binary does.
 var buildTime = time.Now()

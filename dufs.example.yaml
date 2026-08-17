@@ -1,5 +1,5 @@
-# Configuration de dufs (le service de stockage).
-# Il n'est pas publié : seule la passerelle le joint, par le réseau du stack.
+# dufs configuration (the storage tier).
+# It is never published: only the gateway reaches it, over the stack network.
 serve-path: /data
 bind: 0.0.0.0
 port: 5000
@@ -8,13 +8,13 @@ allow-upload: true
 allow-archive: true
 allow-search: true
 
-# allow-delete n'est pas un confort : sans lui, un envoi interrompu laisse un
-# fichier partiel qu'aucune requête ne peut réécrire, et ce nom de fichier est
-# bloqué définitivement. C'est aussi ce droit qui autorise la reprise.
+# allow-delete is not a convenience. Without it an interrupted upload leaves a
+# partial file that no request can overwrite, and that filename is blocked for
+# good. It is also the permission that makes resuming possible.
 allow-delete: true
 
-# Conservé comme défense en profondeur même sur un réseau interne. La passerelle
-# pose l'en-tête correspondante via `upstream_auth`; le navigateur ne la voit
-# jamais et n'aura donc jamais la fenêtre du navigateur.
+# Kept as defence in depth even on an internal network. The gateway sets the
+# matching header through `upstream_auth`; the browser never sees it, and so
+# never gets the native credential dialog.
 auth:
-  - "stockage:CHANGEZ-MOI@/:rw"
+  - "storage:CHANGE-ME@/:rw"

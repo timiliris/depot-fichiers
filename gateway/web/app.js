@@ -1,24 +1,110 @@
 "use strict";
 
-/* Interface du dépôt. Parle à depot-gw, qui relaie vers dufs.
+/* Drop — browser front end. Talks to depot-gw, which relays to dufs.
  *
- * La contrainte qui gouverne tout l'envoi : Cloudflare refuse tout corps de
- * requête au-delà de 100 Mo, et on ne peut pas s'y soustraire. Chaque fichier
- * part donc en tranches, la première en PUT, les suivantes en PATCH avec
- * `X-Update-Range: append`. Effet de bord bienvenu : une coupure ne coûte que
- * la tranche en cours, et la pause devient gratuite.
+ * The constraint that shapes the whole upload path: Cloudflare rejects any
+ * request body over 100MB and a proxied record cannot opt out. So every file
+ * goes up in slices — the first as PUT, the rest as PATCH with
+ * `X-Update-Range: append`, which dufs stitches back together. Welcome side
+ * effect: an interruption only costs the slice in flight, and pausing is free.
  */
 
-const CHUNK = 32 * 1024 * 1024;   // marge confortable sous les 100 Mo
-const PARALLEL = 2;               // au-delà, les envois se volent la bande
+const CHUNK = 32 * 1024 * 1024;   // comfortable margin under the 100MB cap
+const PARALLEL = 2;               // beyond this, uploads just steal each other's bandwidth
 
 const $ = (id) => document.getElementById(id);
+
+/* ── translations ─────────────────────────────────────────────────── */
+
+const I18N = {
+  en: {
+    login_sub: "Private file drop", field_user: "Username", field_password: "Password",
+    pw_show: "Show password", pw_hide: "Hide password", sign_in: "Sign in", sign_out: "Sign out",
+    signed_in_as: "Signed in as {0}", breadcrumb: "Path", filter: "Filter…", account: "Account",
+    view: "View", view_list: "List", view_grid: "Grid",
+    send_files: "Upload files", send_folder: "Upload a folder", new_folder: "New folder",
+    root: "Drop", col_name: "Name", col_size: "Size", col_date: "Modified",
+    empty_title: "This folder is empty",
+    empty_sub: "Drop files anywhere on the page to upload them.",
+    uploads: "Uploads", clear: "Clear", drop_here: "Drop to upload",
+    download: "Download", rename: "Rename", delete: "Delete", cancel: "Cancel",
+    pause: "Pause", resume: "Resume", retry: "Retry", close: "Close",
+    quota: "{0} used of {1} · {2} free",
+    n_done: "{0} done", n_of_m: "{0}/{1}", n_done_m_failed: "{0} done, {1} failed",
+    up_waiting: "Waiting", up_paused: "Paused", up_done: "Done",
+    up_progress: "{0}% · {1} of {2}", up_rate: "{1}/s · {0} left",
+    ask_rename: "Rename", ask_new_folder: "New folder", folder_name: "Folder name",
+    ask_delete: "Delete?", ask_delete_body: "“{0}” will be deleted permanently.",
+    created: "Folder created", renamed: "Renamed", deleted: "Deleted",
+    err_login: "Wrong username or password", err_throttled: "Too many attempts, try again in {0}s",
+    err_session: "Session expired, please sign in again", err_generic: "Something went wrong",
+    err_list: "Could not list this folder ({0})", err_mkdir: "Could not create the folder ({0})",
+    err_delete: "Could not delete ({0})", err_rename: "Could not rename ({0})",
+    err_status: "Error {0}", err_conn: "Connection lost", err_slice: "Slice rejected ({0})",
+    err_aborted: "Interrupted", preview_loading: "Loading…", preview_none: "Preview unavailable.",
+    preview_cut: "… (preview truncated)",
+    unit_b: "B", unit_kb: "KB", unit_mb: "MB", unit_gb: "GB", unit_tb: "TB",
+    dur_s: "{0}s", dur_min: "{0} min", dur_h: "{0}h {1}min", dur_unknown: "—",
+  },
+  fr: {
+    login_sub: "Espace de dépôt privé", field_user: "Identifiant", field_password: "Mot de passe",
+    pw_show: "Afficher le mot de passe", pw_hide: "Masquer le mot de passe",
+    sign_in: "Se connecter", sign_out: "Se déconnecter",
+    signed_in_as: "Connecté en tant que {0}", breadcrumb: "Chemin", filter: "Filtrer…",
+    account: "Compte", view: "Affichage", view_list: "Liste", view_grid: "Grille",
+    send_files: "Envoyer des fichiers", send_folder: "Envoyer un dossier", new_folder: "Nouveau dossier",
+    root: "Dépôt", col_name: "Nom", col_size: "Taille", col_date: "Modifié",
+    empty_title: "Ce dossier est vide",
+    empty_sub: "Glissez des fichiers n’importe où sur la page pour les envoyer.",
+    uploads: "Envois", clear: "Effacer", drop_here: "Déposez pour envoyer",
+    download: "Télécharger", rename: "Renommer", delete: "Supprimer", cancel: "Annuler",
+    pause: "Suspendre", resume: "Reprendre", retry: "Reprendre", close: "Fermer",
+    quota: "{0} utilisés sur {1} · {2} libres",
+    n_done: "{0} terminé", n_of_m: "{0}/{1}", n_done_m_failed: "{0} terminé, {1} en échec",
+    up_waiting: "En attente", up_paused: "Suspendu", up_done: "Terminé",
+    up_progress: "{0}% · {1} sur {2}", up_rate: "{1}/s · {0} restantes",
+    ask_rename: "Renommer", ask_new_folder: "Nouveau dossier", folder_name: "Nom du dossier",
+    ask_delete: "Supprimer ?", ask_delete_body: "« {0} » sera supprimé définitivement.",
+    created: "Dossier créé", renamed: "Renommé", deleted: "Supprimé",
+    err_login: "Identifiants incorrects", err_throttled: "Trop de tentatives, réessayez dans {0} s",
+    err_session: "Session expirée, reconnectez-vous", err_generic: "Une erreur est survenue",
+    err_list: "Liste indisponible ({0})", err_mkdir: "Création refusée ({0})",
+    err_delete: "Suppression refusée ({0})", err_rename: "Renommage refusé ({0})",
+    err_status: "Erreur {0}", err_conn: "Connexion interrompue", err_slice: "Tranche refusée ({0})",
+    err_aborted: "Interrompu", preview_loading: "Chargement…", preview_none: "Aperçu impossible.",
+    preview_cut: "… (aperçu tronqué)",
+    unit_b: "o", unit_kb: "Ko", unit_mb: "Mo", unit_gb: "Go", unit_tb: "To",
+    dur_s: "{0} s", dur_min: "{0} min", dur_h: "{0} h {1} min", dur_unknown: "—",
+  },
+};
+
+let LANG = "en";
+
+function t(key, ...args) {
+  const dict = I18N[LANG] || I18N.en;
+  let s = dict[key] ?? I18N.en[key] ?? key;
+  args.forEach((v, i) => { s = s.split(`{${i}}`).join(v); });
+  return s;
+}
+
+/** Applies the dictionary to every marked node in the static markup. */
+function translateDOM() {
+  document.documentElement.lang = LANG;
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-placeholder]")) {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  }
+  for (const el of document.querySelectorAll("[data-i18n-aria]")) {
+    el.setAttribute("aria-label", t(el.dataset.i18nAria));
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
+}
 
 const state = {
   path: "/",
   entries: [],
   sort: { key: "name", dir: 1 },
-  grid: localStorage.getItem("depot.view") === "grid",
+  grid: localStorage.getItem("drop.view") === "grid",
   filter: "",
   user: null,
 };
@@ -27,8 +113,8 @@ const state = {
 
 const api = {
   url(p, query = "") {
-    // Le slash final compte: sans lui dufs renvoie une redirection vers la
-    // version avec slash, et ce Location pointe hors de /api/fs.
+    // The trailing slash matters: without it dufs answers a redirect to the
+    // slashed form, and that Location points outside /api/fs.
     const trailing = p.endsWith("/");
     const clean = p.split("/").filter(Boolean).map(encodeURIComponent).join("/");
     return "/api/fs/" + clean + (trailing && clean ? "/" : "") + query;
@@ -36,24 +122,22 @@ const api = {
 
   async json(p) {
     const dir = p.endsWith("/") ? p : p + "/";
-    const r = await fetch(api.url(dir, "?json"), {
-      headers: { Accept: "application/json" },
-    });
+    const r = await fetch(api.url(dir, "?json"), { headers: { Accept: "application/json" } });
     if (r.status === 401) throw new SessionLost();
-    if (!r.ok) throw new Error(`liste indisponible (${r.status})`);
+    if (!r.ok) throw new Error(t("err_list", r.status));
     return r.json();
   },
 
   async mkdir(p) {
     const r = await fetch(api.url(p), { method: "MKCOL", headers: { "X-Depot": "1" } });
-    // 405 = déjà là, ce qui nous convient parfaitement.
-    if (!r.ok && r.status !== 405) throw new Error(`création refusée (${r.status})`);
+    // 405 means it already exists, which suits us fine.
+    if (!r.ok && r.status !== 405) throw new Error(t("err_mkdir", r.status));
   },
 
   async remove(p) {
     const r = await fetch(api.url(p), { method: "DELETE", headers: { "X-Depot": "1" } });
     if (r.status === 401) throw new SessionLost();
-    if (!r.ok) throw new Error(`suppression refusée (${r.status})`);
+    if (!r.ok) throw new Error(t("err_delete", r.status));
   },
 
   async move(from, to) {
@@ -62,7 +146,7 @@ const api = {
       headers: { "X-Depot": "1", Destination: location.origin + api.url(to) },
     });
     if (r.status === 401) throw new SessionLost();
-    if (!r.ok) throw new Error(`renommage refusé (${r.status})`);
+    if (!r.ok) throw new Error(t("err_rename", r.status));
   },
 
   async size(p) {
@@ -79,45 +163,47 @@ const api = {
 
 class SessionLost extends Error {
   constructor() {
-    super("session expirée");
+    super("session_expired");
   }
 }
 
-/* ── formatage ────────────────────────────────────────────────────── */
-
-const UNITS = ["o", "Ko", "Mo", "Go", "To"];
+/* ── formatting ───────────────────────────────────────────────────── */
 
 function bytes(n) {
-  if (!n) return "0 o";
-  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), UNITS.length - 1);
+  const units = ["unit_b", "unit_kb", "unit_mb", "unit_gb", "unit_tb"];
+  if (!n) return `0 ${t("unit_b")}`;
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
   const v = n / 1024 ** i;
-  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${UNITS[i]}`;
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${t(units[i])}`;
 }
 
 function when(ms) {
   const d = new Date(ms);
   const days = (Date.now() - ms) / 86400000;
-  if (days < 1) return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-  if (days < 300) return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+  const loc = LANG === "fr" ? "fr-FR" : "en-GB";
+  if (days < 1) return d.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit" });
+  if (days < 300) {
+    return d.toLocaleDateString(loc, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString(loc, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function duration(sec) {
-  if (!isFinite(sec) || sec < 0) return "—";
-  if (sec < 60) return `${Math.ceil(sec)} s`;
-  if (sec < 3600) return `${Math.round(sec / 60)} min`;
-  return `${Math.floor(sec / 3600)} h ${Math.round((sec % 3600) / 60)} min`;
+  if (!isFinite(sec) || sec < 0) return t("dur_unknown");
+  if (sec < 60) return t("dur_s", Math.ceil(sec));
+  if (sec < 3600) return t("dur_min", Math.round(sec / 60));
+  return t("dur_h", Math.floor(sec / 3600), Math.round((sec % 3600) / 60));
 }
 
-// Comparaison indifférente aux accents et à la casse : « Été » se classe
-// avec « ete », ce qu'un tri brut sur les codes UTF-16 ne fait pas.
-const collator = new Intl.Collator("fr", { numeric: true, sensitivity: "base" });
+// Accent- and case-insensitive ordering, so "Été" sorts next to "ete" instead of
+// wherever its UTF-16 code points happen to fall.
+let collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
 function fold(s) {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-/* ── icônes ───────────────────────────────────────────────────────── */
+/* ── icons ────────────────────────────────────────────────────────── */
 
 const svg = (paths, extra = "") =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
@@ -159,7 +245,7 @@ function kindOf(name) {
   return "file";
 }
 
-/* ── notifications ────────────────────────────────────────────────── */
+/* ── notices ──────────────────────────────────────────────────────── */
 
 function toast(msg, kind = "") {
   const el = document.createElement("div");
@@ -174,9 +260,9 @@ function toast(msg, kind = "") {
   }, kind === "bad" ? 5200 : 2600);
 }
 
-/* Remplace confirm() et prompt(), dont l'apparence est imposée par le
- * navigateur. Résout avec la valeur saisie, ou null si on annule. */
-function ask({ title, message, value, placeholder, confirmLabel = "Valider", danger = false }) {
+/* Stands in for confirm() and prompt(), whose appearance the browser dictates.
+ * Resolves with the typed value, or null when dismissed. */
+function ask({ title, message, value, placeholder, confirmLabel, danger = false }) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "sheet";
@@ -189,9 +275,9 @@ function ask({ title, message, value, placeholder, confirmLabel = "Valider", dan
                   placeholder="${escapeHTML(placeholder || "")}" spellcheck="false">`
         : ""}
         <div class="sheet-actions">
-          <button type="button" class="btn btn-ghost" data-cancel>Annuler</button>
+          <button type="button" class="btn btn-ghost" data-cancel>${escapeHTML(t("cancel"))}</button>
           <button type="submit" class="btn ${danger ? "btn-danger" : "btn-primary"}">
-            ${escapeHTML(confirmLabel)}
+            ${escapeHTML(confirmLabel || t("sign_in"))}
           </button>
         </div>
       </form>`;
@@ -224,7 +310,7 @@ function escapeHTML(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* ── navigation et affichage ──────────────────────────────────────── */
+/* ── navigation and rendering ─────────────────────────────────────── */
 
 async function go(p, push = true) {
   state.path = p.endsWith("/") ? p : p + "/";
@@ -260,7 +346,7 @@ function renderCrumbs() {
     bc.append(b);
   };
 
-  add("Dépôt", "/", parts.length === 0);
+  add(t("root"), "/", parts.length === 0);
   parts.forEach((seg, i) => {
     const sep = document.createElement("span");
     sep.className = "crumb-sep";
@@ -278,7 +364,7 @@ function sorted() {
     .filter((e) => !needle || fold(e.name).includes(needle))
     .sort((a, b) => {
       const ad = a.path_type.startsWith("Dir"), bd = b.path_type.startsWith("Dir");
-      if (ad !== bd) return ad ? -1 : 1;   // dossiers d'abord, quel que soit le tri
+      if (ad !== bd) return ad ? -1 : 1;   // folders first, whatever the sort key
       if (key === "size") return (a.size - b.size) * dir;
       if (key === "date") return (a.mtime - b.mtime) * dir;
       return collator.compare(a.name, b.name) * dir;
@@ -300,18 +386,13 @@ function renderListing() {
 function headerRow() {
   const head = document.createElement("div");
   head.className = "list-head";
-  const cols = [
-    ["", ""],
-    ["name", "Nom"],
-    ["size", "Taille"],
-    ["date", "Modifié"],
-  ];
+  const cols = [["", ""], ["name", t("col_name")], ["size", t("col_size")], ["date", t("col_date")]];
   head.innerHTML = cols.map(([k, label], i) => {
     if (!label) return "<span></span>";
     const on = state.sort.key === k;
     const arrow = on ? (state.sort.dir === 1 ? " ↑" : " ↓") : "";
     return `<button class="col-btn${i === 2 ? " num" : ""}${on ? " is-sorted" : ""}"
-              data-sort="${k}">${label}${arrow}</button>`;
+              data-sort="${k}">${escapeHTML(label)}${arrow}</button>`;
   }).join("") + "<span></span>";
 
   head.querySelectorAll("[data-sort]").forEach((b) => {
@@ -339,9 +420,9 @@ function row(e) {
     <span class="row-date">${when(e.mtime)}</span>
     <span class="row-actions">
       <a href="${api.url(full, isDir ? "?zip" : "")}" download="${escapeHTML(e.name)}"
-         title="Télécharger" data-stop>${ICON.download}</a>
-      <button title="Renommer" data-rename>${ICON.pencil}</button>
-      <button title="Supprimer" class="is-danger" data-del>${ICON.trash}</button>
+         title="${escapeHTML(t("download"))}" data-stop>${ICON.download}</a>
+      <button title="${escapeHTML(t("rename"))}" data-rename>${ICON.pencil}</button>
+      <button title="${escapeHTML(t("delete"))}" class="is-danger" data-del>${ICON.trash}</button>
     </span>`;
 
   const open = () => (isDir ? go(full + "/") : preview(e, full));
@@ -349,13 +430,11 @@ function row(e) {
   el.onkeydown = (ev) => { if (ev.key === "Enter") open(); };
 
   el.querySelector("[data-rename]").onclick = async () => {
-    const name = await ask({
-      title: "Renommer", value: e.name, confirmLabel: "Renommer",
-    });
+    const name = await ask({ title: t("ask_rename"), value: e.name, confirmLabel: t("rename") });
     if (!name || name === e.name) return;
     try {
       await api.move(full, state.path + name);
-      toast("Renommé", "ok");
+      toast(t("renamed"), "ok");
       go(state.path, false);
     } catch (err) {
       err instanceof SessionLost ? sessionLost() : toast(err.message, "bad");
@@ -364,14 +443,13 @@ function row(e) {
 
   el.querySelector("[data-del]").onclick = async () => {
     const ok = await ask({
-      title: "Supprimer ?",
-      message: `« ${e.name} » sera supprimé définitivement.`,
-      confirmLabel: "Supprimer", danger: true,
+      title: t("ask_delete"), message: t("ask_delete_body", e.name),
+      confirmLabel: t("delete"), danger: true,
     });
     if (!ok) return;
     try {
       await api.remove(full);
-      toast("Supprimé", "ok");
+      toast(t("deleted"), "ok");
       go(state.path, false);
       refreshQuota();
     } catch (err) {
@@ -382,13 +460,13 @@ function row(e) {
   return el;
 }
 
-/* ── aperçu ───────────────────────────────────────────────────────── */
+/* ── preview ──────────────────────────────────────────────────────── */
 
 async function preview(entry, full) {
   const kind = kindOf(entry.name);
   const url = api.url(full);
 
-  // Rien à montrer pour une archive ou un binaire : autant le télécharger.
+  // Nothing to show for an archive or an opaque binary: just fetch it.
   if (!["video", "image", "audio", "text"].includes(kind) && ext(entry.name) !== "pdf") {
     window.location.href = url;
     return;
@@ -417,15 +495,15 @@ async function preview(entry, full) {
     stage.append(f);
   } else {
     const pre = document.createElement("pre");
-    pre.textContent = "Chargement…";
+    pre.textContent = t("preview_loading");
     stage.append(pre);
     try {
-      // Un .log de 2 Go ne doit pas partir en mémoire : on n'en lit qu'un bout.
+      // A 2GB .log must not land in memory: read the head of it only.
       const r = await fetch(url, { headers: { Range: "bytes=0-524287" } });
       const text = await r.text();
-      pre.textContent = text + (entry.size > 524288 ? "\n\n… (aperçu tronqué)" : "");
+      pre.textContent = text + (entry.size > 524288 ? `\n\n${t("preview_cut")}` : "");
     } catch {
-      pre.textContent = "Aperçu impossible.";
+      pre.textContent = t("preview_none");
     }
   }
   $("modal").hidden = false;
@@ -433,10 +511,10 @@ async function preview(entry, full) {
 
 function closePreview() {
   $("modal").hidden = true;
-  $("modalStage").innerHTML = "";   // coupe la lecture en cours
+  $("modalStage").innerHTML = "";   // stops whatever was playing
 }
 
-/* ── envoi ────────────────────────────────────────────────────────── */
+/* ── uploading ────────────────────────────────────────────────────── */
 
 const queue = {
   items: [],
@@ -475,9 +553,8 @@ const queue = {
     const failed = this.items.filter((u) => u.status === "failed").length;
 
     $("uploadsCount").textContent = active.length
-      ? `${done}/${this.items.length}`
-      : failed ? `${done} terminé${done > 1 ? "s" : ""}, ${failed} en échec`
-        : `${done} terminé${done > 1 ? "s" : ""}`;
+      ? t("n_of_m", done, this.items.length)
+      : failed ? t("n_done_m_failed", done, failed) : t("n_done", done);
 
     const total = this.items.reduce((n, u) => n + u.file.size, 0);
     const sent = this.items.reduce((n, u) => n + u.sent, 0);
@@ -502,7 +579,7 @@ class Upload {
     this.dest = destDir + this.name;
     this.sent = 0;
     this.status = "waiting";      // waiting | running | paused | done | failed
-    this.started = false;         // vrai dès qu'une tranche est partie: autorise la reprise
+    this.started = false;         // true once a slice has gone out: enables resuming
     this.xhr = null;
     this.lastTick = 0;
     this.lastSent = 0;
@@ -515,10 +592,10 @@ class Upload {
     this.el.className = "up";
     this.el.innerHTML = `
       <span class="up-name">${escapeHTML(this.name)}</span>
-      <span class="up-meta"><span data-state>En attente</span><span data-speed></span></span>
+      <span class="up-meta"><span data-state>${escapeHTML(t("up_waiting"))}</span><span data-speed></span></span>
       <span class="up-ctl">
-        <button data-pause title="Suspendre">${ICON.pause}</button>
-        <button data-cancel title="Annuler">${ICON.x}</button>
+        <button data-pause title="${escapeHTML(t("pause"))}">${ICON.pause}</button>
+        <button data-cancel title="${escapeHTML(t("cancel"))}">${ICON.x}</button>
       </span>
       <span class="up-bar"><span data-fill></span></span>`;
 
@@ -535,10 +612,11 @@ class Upload {
   paint(label) {
     const pct = this.file.size ? (this.sent / this.file.size) * 100 : 100;
     this.$fill.style.width = `${pct}%`;
-    this.$state.textContent = label ?? `${Math.floor(pct)}% · ${bytes(this.sent)} / ${bytes(this.file.size)}`;
+    this.$state.textContent = label
+      ?? t("up_progress", Math.floor(pct), bytes(this.sent), bytes(this.file.size));
     this.$speed.textContent =
       this.status === "running" && this.speed > 0
-        ? `${bytes(this.speed)}/s · ${duration((this.file.size - this.sent) / this.speed)}`
+        ? t("up_rate", duration((this.file.size - this.sent) / this.speed), bytes(this.speed))
         : "";
     queue.refresh();
   }
@@ -548,8 +626,8 @@ class Upload {
     this.status = "running";
     this.el.classList.remove("is-failed");
     try {
-      // Les dossiers déposés arrivent avec un chemin relatif : on crée la
-      // hiérarchie avant, sans supposer que le stockage le fera pour nous.
+      // Dropped folders arrive with a relative path: build the tree first rather
+      // than assuming the storage will do it for us.
       const dirs = this.name.split("/").slice(0, -1);
       let acc = this.dest.slice(0, this.dest.length - this.name.length);
       for (const d of dirs) {
@@ -557,10 +635,10 @@ class Upload {
         await api.mkdir(acc);
       }
 
-      // On ne reprend que ce que cet envoi-ci a commencé. Demander la taille
-      // distante pour un envoi neuf ferait « reprendre » un homonyme déjà
-      // présent : ses octets seraient conservés et le fichier obtenu serait un
-      // mélange des deux, sans que rien ne le signale.
+      // Only resume what this very upload started. Asking the server for the
+      // size of a brand-new upload would "resume" a same-named file that is
+      // already there: its bytes would be kept and the result would be a silent
+      // mix of the two.
       if (this.started) {
         this.sent = await api.size(this.dest);
         if (this.sent > this.file.size) this.sent = 0;
@@ -582,13 +660,13 @@ class Upload {
       this.el.classList.add("is-done");
       this.$pause.remove();
       this.$cancel.remove();
-      this.paint("Terminé");
+      this.paint(t("up_done"));
       this.$state.classList.add("is-ok");
     } catch (e) {
       if (this.status === "cancelled" || this.status === "paused") return;
       this.status = "failed";
       this.el.classList.add("is-failed");
-      this.paint(e instanceof SessionLost ? "Session expirée" : (e.message || "Échec"));
+      this.paint(e instanceof SessionLost ? t("err_session") : (e.message || t("err_generic")));
       this.$state.classList.add("is-bad");
       this.$pause.replaceWith(this.retryButton());
       if (e instanceof SessionLost) sessionLost();
@@ -597,14 +675,14 @@ class Upload {
 
   retryButton() {
     const b = document.createElement("button");
-    b.title = "Reprendre";
+    b.title = t("retry");
     b.innerHTML = ICON.retry;
     b.onclick = () => {
       b.remove();
       this.el.append(this.$pause);
       this.status = "waiting";
       this.$state.classList.remove("is-bad");
-      this.paint("En attente");
+      this.paint(t("up_waiting"));
       queue.pump();
     };
     return b;
@@ -634,11 +712,11 @@ class Upload {
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
         else if (xhr.status === 401) reject(new SessionLost());
-        else if (xhr.status === 413) reject(new Error("tranche refusée (413)"));
-        else reject(new Error(`erreur ${xhr.status}`));
+        else if (xhr.status === 413) reject(new Error(t("err_slice", 413)));
+        else reject(new Error(t("err_status", xhr.status)));
       };
-      xhr.onerror = () => reject(new Error("connexion interrompue"));
-      xhr.onabort = () => reject(new Error("interrompu"));
+      xhr.onerror = () => reject(new Error(t("err_conn")));
+      xhr.onabort = () => reject(new Error(t("err_aborted")));
       xhr.send(blob);
     });
   }
@@ -648,15 +726,15 @@ class Upload {
     this.status = "paused";
     this.xhr?.abort();
     this.$pause.innerHTML = ICON.play;
-    this.$pause.title = "Reprendre";
-    this.paint("Suspendu");
+    this.$pause.title = t("resume");
+    this.paint(t("up_paused"));
   }
 
   resume() {
     this.$pause.innerHTML = ICON.pause;
-    this.$pause.title = "Suspendre";
+    this.$pause.title = t("pause");
     this.status = "waiting";
-    this.paint("En attente");
+    this.paint(t("up_waiting"));
     queue.pump();
   }
 
@@ -676,8 +754,8 @@ function enqueue(files, dir = state.path) {
   for (const f of files) queue.add(f, f.webkitRelativePath || f.name, dir);
 }
 
-/* Un dépôt peut contenir des dossiers ; l'API des entrées permet de les
- * parcourir, ce que la simple liste `files` du glisser-déposer ne donne pas. */
+/* A drop can contain folders; the entries API walks them, which the plain
+ * `files` list of a drag-and-drop does not give us. */
 async function walkDataTransfer(dt) {
   const out = [];
   const entries = [...dt.items]
@@ -711,7 +789,7 @@ async function walkDataTransfer(dt) {
 function sessionLost() {
   document.body.classList.remove("authed");
   state.user = null;
-  toast("Session expirée, reconnectez-vous", "bad");
+  toast(t("err_session"), "bad");
 }
 
 async function refreshQuota() {
@@ -721,12 +799,19 @@ async function refreshQuota() {
   const fill = $("quotaFill");
   fill.style.width = `${Math.max(pct, 1.5)}%`;
   fill.className = pct > 92 ? "is-bad" : pct > 78 ? "is-warn" : "";
-  $("quotaText").textContent = `${bytes(q.used)} utilisés sur ${bytes(q.total)} · ${bytes(q.free)} libres`;
+  $("quotaText").textContent = t("quota", bytes(q.used), bytes(q.total), bytes(q.free));
+}
+
+function setLang(lang) {
+  LANG = I18N[lang] ? lang : (navigator.language || "en").toLowerCase().startsWith("fr") ? "fr" : "en";
+  collator = new Intl.Collator(LANG, { numeric: true, sensitivity: "base" });
+  translateDOM();
 }
 
 async function boot() {
   const r = await fetch("/api/session");
   const s = await r.json();
+  setLang(s.lang);
   if (s.title) {
     document.title = s.title;
     $("loginTitle").textContent = s.title;
@@ -741,7 +826,7 @@ async function boot() {
 
 function enterApp(s) {
   state.user = s.user;
-  $("userName").textContent = s.user;
+  $("signedInAs").innerHTML = t("signed_in_as", `<strong>${escapeHTML(s.user)}</strong>`);
   $("avatar").textContent = s.user.slice(0, 1);
   document.body.classList.add("authed");
   if (state.grid) { $("viewGrid").classList.add("is-on"); $("viewList").classList.remove("is-on"); }
@@ -750,7 +835,7 @@ function enterApp(s) {
   refreshQuota();
 }
 
-/* ── câblage ──────────────────────────────────────────────────────── */
+/* ── wiring ───────────────────────────────────────────────────────── */
 
 $("loginForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -766,7 +851,13 @@ $("loginForm").onsubmit = async (e) => {
       body: JSON.stringify({ user: $("loginUser").value, password: $("loginPass").value }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.error || "connexion refusée");
+    if (!r.ok) {
+      // The server answers with a stable code, so the wording stays here where
+      // the dictionary lives.
+      throw new Error(data.error === "throttled"
+        ? t("err_throttled", data.retry_after || 60)
+        : data.error === "bad_credentials" ? t("err_login") : t("err_generic"));
+    }
     $("loginPass").value = "";
     enterApp({ user: data.user, admin: data.admin });
   } catch (e2) {
@@ -784,7 +875,7 @@ $("pwToggle").onclick = () => {
   const show = i.type === "password";
   i.type = show ? "text" : "password";
   $("pwToggle").classList.toggle("is-on", show);
-  $("pwToggle").setAttribute("aria-label", show ? "Masquer le mot de passe" : "Afficher le mot de passe");
+  $("pwToggle").setAttribute("aria-label", show ? t("pw_hide") : t("pw_show"));
   i.focus();
 };
 
@@ -812,7 +903,7 @@ $("viewGrid").onclick = () => setView(true);
 
 function setView(grid) {
   state.grid = grid;
-  localStorage.setItem("depot.view", grid ? "grid" : "list");
+  localStorage.setItem("drop.view", grid ? "grid" : "list");
   $("viewGrid").classList.toggle("is-on", grid);
   $("viewList").classList.toggle("is-on", !grid);
   renderListing();
@@ -825,11 +916,13 @@ $("fileInput").onchange = (e) => { enqueue(e.target.files); e.target.value = "";
 $("folderInput").onchange = (e) => { enqueue(e.target.files); e.target.value = ""; };
 
 $("newFolder").onclick = async () => {
-  const name = await ask({ title: "Nouveau dossier", value: "", placeholder: "Nom du dossier", confirmLabel: "Créer" });
+  const name = await ask({
+    title: t("ask_new_folder"), value: "", placeholder: t("folder_name"), confirmLabel: t("new_folder"),
+  });
   if (!name) return;
   try {
     await api.mkdir(state.path + name + "/");
-    toast("Dossier créé", "ok");
+    toast(t("created"), "ok");
     go(state.path, false);
   } catch (e) {
     toast(e.message, "bad");
@@ -848,7 +941,7 @@ $("modal").onmousedown = (e) => { if (e.target.id === "modal" || e.target.id ===
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("modal").hidden) closePreview();
-  // « / » met le curseur dans le filtre, sauf si on est déjà en train d'écrire.
+  // "/" jumps to the filter, unless something is already being typed into.
   if (e.key === "/" && !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) {
     e.preventDefault();
     $("filter").focus();
@@ -860,7 +953,7 @@ window.onpopstate = (e) => {
   go(e.state?.p || decodeURIComponent(location.hash.slice(1)) || "/", false);
 };
 
-/* glisser-déposer sur toute la page */
+/* full-page drag and drop */
 let dragDepth = 0;
 
 window.addEventListener("dragenter", (e) => {
@@ -891,7 +984,7 @@ window.addEventListener("drop", async (e) => {
   for (const { file, path } of found) queue.add(file, path, dir);
 });
 
-// Un envoi en cours doit résister à une fermeture d'onglet distraite.
+// An upload in flight should survive an absent-minded tab close.
 window.addEventListener("beforeunload", (e) => {
   if (queue.items.some((u) => u.status === "running" || u.status === "waiting")) {
     e.preventDefault();
