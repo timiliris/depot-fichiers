@@ -273,6 +273,15 @@ UX, Baymard) rather than by eye, which is how the following got caught:
 - **320px wide works**: one column, no horizontal scroll, keyboard-reachable
   actions visible when focused rather than only on hover.
 
+### Assets and caches
+
+`index.html` is never cached and points at `app.css?v=<fingerprint>` and
+`app.js?v=<fingerprint>`, computed from the embedded files themselves; those are
+served `immutable` for a year. This is not premature optimisation — a CDN in front
+will otherwise happily cache a stylesheet for hours and serve it next to a fresh
+script, which breaks the interface in a way redeploying does not fix. Tying both
+URLs to one fingerprint makes a mismatch impossible.
+
 ## Security
 
 **Uploaded files cannot script the origin.** This is the one that matters most on

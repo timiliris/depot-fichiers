@@ -641,10 +641,22 @@ func (s *server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	case ".html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-	case ".css":
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case ".js":
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		body = []byte(strings.NewReplacer(
+			`href="app.css"`, `href="app.css?v=`+assetVer+`"`,
+			`src="app.js"`, `src="app.js?v=`+assetVer+`"`,
+		).Replace(string(body)))
+	case ".css", ".js":
+		if path.Ext(name) == ".css" {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		} else {
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		}
+		// Safe to keep for a year: a change to either file changes the URL.
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 	case ".svg":
 		w.Header().Set("Content-Type", "image/svg+xml")
 	case ".webmanifest":
@@ -699,3 +711,22 @@ func bytesReader(b []byte) *bytes.Reader { return bytes.NewReader(b) }
 // buildTime is fixed so ServeContent hands out a stable Last-Modified for the
 // embedded assets; they only change when the binary does.
 var buildTime = time.Now()
+
+// assetVer fingerprints the embedded interface. The stylesheet and the script
+// are served under ?v=<fingerprint> and cached hard, while index.html — which
+// carries those URLs — is never cached. Without this a CDN happily serves a
+// four-hour-old stylesheet next to a fresh script, and the interface breaks in a
+// way no amount of redeploying fixes.
+var assetVer = fingerprintAssets()
+
+func fingerprintAssets() string {
+	h := sha256.New()
+	for _, name := range []string{"index.html", "app.css", "app.js"} {
+		b, err := fs.ReadFile(webFS(), name)
+		if err != nil {
+			return strconv.FormatInt(buildTime.Unix(), 36)
+		}
+		h.Write(b)
+	}
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))[:10]
+}

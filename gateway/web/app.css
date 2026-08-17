@@ -773,7 +773,21 @@ body.is-loading .listing, body.is-loading .empty { display: none; }
 }
 .sheet-input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
 
-.sheet-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+  margin-top: .6rem;
+}
+
+/* The accounts panel holds two action areas: the form's own submit, and the
+   dialog's dismiss. Sitting flush against each other they read as one group and
+   the wrong button looks like the way out, so the dismiss is separated. */
+.acc-new + .sheet-actions {
+  margin-top: 1.15rem;
+  padding-top: .9rem;
+  border-top: 1px solid var(--line-soft);
+}
 
 .sheet-card.is-wide { max-width: 34rem; }
 
