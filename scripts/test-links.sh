@@ -41,6 +41,23 @@ sleep 1
 [ -z "$(ls "$DATA"/.trash/ 2>/dev/null)" ] && ok "bin emptied" || ko "bin emptied" "reste" empty
 
 echo
+echo "== names with spaces and punctuation =="
+# The destination of a MOVE used to be rebuilt from a decoded path and handed to
+# storage unescaped, so anything with a space in its name failed with 400 — both
+# when deleting (which becomes a move to the bin) and when renaming.
+curl -s -o /dev/null -b "$JAR/j" -H 'X-Depot: 1' -T "$JAR/f.txt" "$BASE/api/fs/space%20name.txt"
+is "delete a file with a space"   "$(code -b "$JAR/j" -H 'X-Depot: 1' -X DELETE "$BASE/api/fs/space%20name.txt")" 204
+curl -s -o /dev/null -b "$JAR/j" -H 'X-Depot: 1' -X MKCOL "$BASE/api/fs/space%20folder/"
+is "delete a folder with a space" "$(code -b "$JAR/j" -H 'X-Depot: 1' -X DELETE "$BASE/api/fs/space%20folder")" 204
+curl -s -o /dev/null -b "$JAR/j" -H 'X-Depot: 1' -T "$JAR/f.txt" "$BASE/api/fs/plain.txt"
+is "rename to a name with a space" \
+  "$(code -b "$JAR/j" -H 'X-Depot: 1' -H "Destination: $BASE/api/fs/renamed%20with%20space.txt" -X MOVE "$BASE/api/fs/plain.txt")" 204
+curl -s -o /dev/null -b "$JAR/j" -H 'X-Depot: 1' -T "$JAR/f.txt" "$BASE/api/fs/hash%23and%20space.txt"
+is "delete a name with # and space" \
+  "$(code -b "$JAR/j" -H 'X-Depot: 1' -X DELETE "$BASE/api/fs/hash%23and%20space.txt")" 204
+code -b "$JAR/j" -H 'X-Depot: 1' -X DELETE "$BASE/api/fs/renamed%20with%20space.txt" >/dev/null
+
+echo
 echo "== share link (read only) =="
 curl -s -o /dev/null -b "$JAR/j" -H 'X-Depot: 1' -T "$JAR/f.txt" "$BASE/api/fs/public.txt"
 S=$(curl -s -b "$JAR/j" -H 'X-Depot: 1' -H 'Content-Type: application/json' \

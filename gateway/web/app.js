@@ -346,8 +346,12 @@ function ask({ title, message, value, label, placeholder, confirmLabel, danger =
         </div>
       </form>`, false, title);
 
-    const close = (result) => { shut(); resolve(result); };
-    wrap.addEventListener("sheet:dismissed", () => resolve(null));
+    // The dismissal event fires synchronously from shut(), so without this
+    // flag it would settle the promise with null before the real answer got
+    // through — every dialog would silently come back as "cancelled".
+    let settled = false;
+    const close = (result) => { settled = true; shut(); resolve(result); };
+    wrap.addEventListener("sheet:dismissed", () => { if (!settled) resolve(null); });
     wrap.querySelector("[data-cancel]").onclick = () => close(null);
     wrap.querySelector("form").onsubmit = (e) => {
       e.preventDefault();

@@ -625,21 +625,53 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
 		return
 	}
-	// A deletion is turned into a move to the bin. Deleting from inside the bin
-	// is left alone — that is how it gets emptied, and the only way anything is
-	// ever really destroyed.
+	// A MOVE has two possible origins — a rename asked for by the browser, or a
+	// deletion this gateway turns into one — and both end up here. The
+	// destination is carried as a plain path and turned into a URL exactly once,
+	// at the end: doing it twice is what silently dropped the escaping and broke
+	// every name containing a space.
+	destPath := ""
+
+	// A deletion becomes a move to the bin. Deleting from inside the bin is left
+	// alone — that is how it gets emptied, and the only way anything is ever
+	// really destroyed.
 	if r.Method == http.MethodDelete && *s.cfg.Trash {
 		bin := trashRoot(me)
 		trimmed := strings.TrimSuffix(clean, "/")
 		if trimmed != bin && !strings.HasPrefix(trimmed, bin+"/") {
 			s.ensureUpstreamDir(strings.TrimPrefix(bin, "/"))
 			// The timestamp keeps two deletions of the same name apart.
-			dest := fmt.Sprintf("%s/%d-%s", bin, time.Now().Unix(), path.Base(trimmed))
+			destPath = fmt.Sprintf("%s/%d-%s", bin, time.Now().Unix(), path.Base(trimmed))
 			r.Method = "MOVE"
-			r.Header.Set("Destination", s.upstreamURL(dest))
 			r.ContentLength = 0
 			r.Body = http.NoBody
 		}
+	}
+
+	// A rename: the browser points Destination back at us, so it has to be
+	// brought into the upstream's space or dufs rejects it as a foreign host.
+	if destPath == "" && r.Method == "MOVE" {
+		if dest := r.Header.Get("Destination"); dest != "" {
+			u, err := url.Parse(dest)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+				return
+			}
+			p := path.Clean(strings.TrimPrefix(u.Path, "/api/fs"))
+			if !strings.HasPrefix(p, "/") {
+				p = "/" + p
+			}
+			destPath = p
+		}
+	}
+
+	if destPath != "" {
+		// A move is a write at the destination too, so it gets the same check.
+		if !withinRoot(me, destPath) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
+			return
+		}
+		r.Header.Set("Destination", s.upstreamURL(destPath))
 	}
 
 	r.URL.Path = clean
@@ -652,22 +684,6 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	// MOVE carries a Destination pointing back at us; rewrite it into the
-	// upstream's space or dufs rejects it as a foreign host.
-	if dest := r.Header.Get("Destination"); dest != "" {
-		if u, err := url.Parse(dest); err == nil {
-			p := path.Clean(strings.TrimPrefix(u.Path, "/api/fs"))
-			if !strings.HasPrefix(p, "/") {
-				p = "/" + p
-			}
-			// A move is a write at the destination too, so it gets the same check.
-			if !withinRoot(me, p) {
-				writeJSON(w, http.StatusForbidden, map[string]any{"error": "outside_root"})
-				return
-			}
-			r.Header.Set("Destination", strings.TrimSuffix(s.cfg.Upstream, "/")+p)
-		}
-	}
 	s.proxy.ServeHTTP(w, r)
 }
 
