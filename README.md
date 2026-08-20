@@ -48,6 +48,21 @@ The interface slices at 32MB: the first slice as `PUT`, the rest as `PATCH` with
 the `X-Update-Range: append` header that dufs stitches back together. Welcome side
 effect — an interruption only costs the slice in flight, and pausing is free.
 
+### On upload speed
+
+Slices of a single file cannot go out in parallel. The storage validates a write's
+range against the file's **current size**, so anything past the end is refused —
+growth is sequential by construction. Whole files do overlap, three at a time:
+measured on a real link, one file gave 16.6 MB/s and three gave 23.7 MB/s. Past
+three the gain flattens, and on a slow uplink more streams only make each one
+worse.
+
+A dropped slice is retried on its own, four times, backing off 1s, 2s, 4s, 8s.
+Each retry asks the storage how many bytes actually landed rather than assuming
+none did — a slice can die halfway through, and appending it again from the start
+would quietly duplicate what already arrived. A refusal (`403`, `413`, an expired
+session) is not retried at all: it fails immediately with the real reason.
+
 ## Architecture
 
 ```mermaid
@@ -75,7 +90,9 @@ never exposed.
 - **One folder per account, or the whole drop** — chosen per account
 - Guests change their own password, so the owner is not the help desk
 - Drag and drop anywhere on the page, **whole folders included**
-- Chunked uploads, **resume after an interruption**, pause, cancel, retry
+- Chunked uploads, **resume after an interruption**, pause, cancel
+- **Automatic retry with backoff** on a dropped connection, resyncing from what
+  the storage actually holds; a refusal fails fast instead
 - Per-file progress: percentage, rate, time left
 - List or grid, breadcrumb, filter, column sorting
 - Inline preview: video, image, audio, text, PDF
